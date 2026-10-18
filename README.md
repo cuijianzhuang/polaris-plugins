@@ -10,6 +10,7 @@
 - [仓库边界与实施路线](docs/roadmap.md)
 - [外部通知插件清单示例](examples/external-notify/polaris-plugin.json)
 - [贡献与开发约定](CONTRIBUTING.md)
+- [个人账号与组织双向同步配置](docs/repository-sync.md)
 - [Polaris 宿主设计 PR #62](https://github.com/cuijianzhuang/Polaris/pull/62)
 
 ## 仓库分工
