@@ -2,10 +2,11 @@
 
 [Polaris](https://github.com/cuijianzhuang/Polaris) 的独立插件框架仓库，用于协议设计、公共工具、语言 SDK 和外部插件示例。社区开发者可以用任意语言部署插件，通过受限 REST API 和签名 Webhook 对接面板。
 
-**当前阶段：设计与仓库初始化。** 已提供架构方案和清单示例；尚未提供可安装的框架发行版、SDK、插件管理器或可运行插件。请勿将示例清单直接当作可安装插件。
+**当前阶段：外部插件安装 MVP 开发。** 本开发分支提供 Go 协议工具、配对服务和可运行的流量汇总示例，需要配套 Polaris 安装管理 PR。事件、嵌入页面和订阅扩展尚未实现；没有正式框架发行版。
 
 ## 从这里开始
 
+- [运行示例与开发入门](docs/developing.md)
 - [架构与完整协议设计](docs/design.md)
 - [仓库边界与实施路线](docs/roadmap.md)
 - [外部通知插件清单示例](examples/external-notify/polaris-plugin.json)

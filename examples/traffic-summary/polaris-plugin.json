@@ -1,0 +1,17 @@
+{
+  "manifestVersion": 1,
+  "id": "traffic-summary",
+  "name": "Traffic summary",
+  "version": "1.0.0",
+  "author": "Polaris contributors",
+  "homepage": "https://github.com/cuijianzhuang/polaris-plugins",
+  "requires": { "hostApi": "^1.0.0" },
+  "runtime": "external",
+  "scopes": ["traffic:read", "plugin:config:read"],
+  "events": [], "pages": [], "portal": [],
+  "settings": [
+    { "key": "label", "label": "Display label", "type": "string", "required": true },
+    { "key": "service_token", "label": "Optional service credential", "type": "secret", "required": false }
+  ],
+  "subscription": { "formats": [], "transform": false }
+}
