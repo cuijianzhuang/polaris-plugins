@@ -1,0 +1,49 @@
+{
+  "id": "hello",
+  "name": "Hello 示例插件",
+  "version": "1.0.0",
+  "author": "Polaris",
+  "description": "演示安装握手、事件接收、后台页面、用户中心入口和自助续期的参考插件",
+  "scopes": [
+    "users:read",
+    "users:renew"
+  ],
+  "events": [
+    "user.created",
+    "user.expired",
+    "user.renewed"
+  ],
+  "pages": [
+    {
+      "id": "events",
+      "title": "Hello 事件",
+      "path": "/admin/events"
+    }
+  ],
+  "portal": [
+    {
+      "title": "续期 30 天",
+      "path": "/shop"
+    }
+  ],
+  "settings": [
+    {
+      "key": "greeting",
+      "label": "问候语",
+      "type": "string",
+      "default": "你好"
+    },
+    {
+      "key": "renew_days",
+      "label": "每次续期天数",
+      "type": "number",
+      "default": "30"
+    },
+    {
+      "key": "api_key",
+      "label": "示例密钥",
+      "type": "secret",
+      "hint": "保存后只能覆盖，不能查看"
+    }
+  ]
+}

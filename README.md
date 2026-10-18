@@ -1,33 +1,56 @@
 # Polaris Plugins
 
-[Polaris](https://github.com/cuijianzhuang/Polaris) 的独立插件框架仓库，用于协议设计、公共工具、语言 SDK 和外部插件示例。社区开发者可以用任意语言部署插件，通过受限 REST API 和签名 Webhook 对接面板。
+[Polaris](https://github.com/cuijianzhuang/Polaris) 的插件开发框架：协议文档、三种语言的 SDK、JSON Schema 和可运行示例。插件是**独立部署的服务**（任意语言），通过受限 REST API 和签名 Webhook 与面板对接——支付 / 商城、通知渠道、用户同步 / 单点登录等都可以做成插件。
 
-**当前阶段：设计与仓库初始化。** 已提供架构方案和清单示例；尚未提供可安装的框架发行版、SDK、插件管理器或可运行插件。请勿将示例清单直接当作可安装插件。
+> 面板侧的插件管理器在 Polaris 的「扩展 → 插件」。社区版最多同时安装 3 个插件，激活专业版授权后按授权上限（0 = 不限）。
 
-## 从这里开始
+## 快速开始
 
-- [架构与完整协议设计](docs/design.md)
-- [仓库边界与实施路线](docs/roadmap.md)
-- [外部通知插件清单示例](examples/external-notify/polaris-plugin.json)
-- [贡献与开发约定](CONTRIBUTING.md)
-- [Polaris 宿主设计 PR #62](https://github.com/cuijianzhuang/Polaris/pull/62)
+```bash
+cd examples/hello && PORT=9100 node server.js   # 一个零依赖的完整参考插件
+# 面板：扩展 → 插件 → 安装插件 → http://127.0.0.1:9100
+```
 
-## 仓库分工
+详见 **[快速开始](docs/getting-started.md)**。
 
-| 仓库 | 负责内容 |
+## 文档
+
+| | |
 | --- | --- |
-| **polaris-plugins** | 插件协议、清单、公共校验与签名工具、SDK、独立服务示例及开发文档 |
-| [Polaris](https://github.com/cuijianzhuang/Polaris) | scope 鉴权、订单事务、事件 outbox、Webhook 调度、插件安装与配置、一级「扩展」菜单、iframe 和订阅适配 |
-| polaris-license | 产品授权服务；插件框架不获取授权签名私钥或绕过专业版授权 |
+| [快速开始](docs/getting-started.md) | 插件与面板的四种往来，十分钟写出第一个插件 |
+| [清单 polaris-plugin.json](docs/manifest.md) | 字段、限制、配置项类型；[JSON Schema](schema/polaris-plugin.schema.json) |
+| [权限范围 scope](docs/scopes.md) | 令牌能访问哪些接口、幂等键、审计 |
+| [事件](docs/events.md) | 事件列表、载荷、投递与重试语义 |
+| [签名校验](docs/signatures.md) | `X-Polaris-Signature`，含测试向量 |
+| [安装握手](docs/install.md) | 面板如何把凭据交给插件，插件需要实现的端点 |
+| [页面与用户身份](docs/embedding.md) | 后台 iframe 页面、用户中心入口、身份令牌 |
+| [调用面板 API](docs/host-api.md) | 续期 / 加流量等常用调用 |
+| [协议版本与设计差异](docs/compatibility.md) | 当前实现与 [设计文档](docs/design.md) 的差异 |
 
-插件独立运行，拥有自己的进程和存储，通过明确授权的接口与宿主通信。第一阶段采用外部服务；WASM 和插件市场在后续单独设计。
+## SDK
 
-## 协议草案
+零依赖，做同样的事：验证面板的签名和身份令牌、封装常用面板 API（带幂等键）。三个 SDK 共用 [`testdata/vectors.json`](testdata/vectors.json) 测试向量。
 
-插件拟在 `GET {base}/polaris-plugin.json` 返回清单，声明版本、权限、事件、页面和设置。管理员批准权限后才生效。当前 `manifestVersion: 1` 和 `requires.hostApi: ^1.0.0` 是目标协议草案，不表示已有兼容的宿主发行版。
+| 语言 | 位置 | 测试 |
+| --- | --- | --- |
+| Node.js ≥ 18 | [`sdk/node`](sdk/node) | `cd sdk/node && npm test` |
+| Python ≥ 3.8 | [`sdk/python`](sdk/python) | `cd sdk/python && python3 -m unittest` |
+| Go ≥ 1.21 | [`sdk/go`](sdk/go) | `cd sdk/go && go test ./...` |
 
-Webhook 拟使用 HMAC-SHA256 对 `timestamp + "." + raw-body` 签名，接收方检查时间窗并按事件 ID 去重。完整边界、配对流程和验证要求见[设计文档](docs/design.md)。
+SDK 尚未发布到包仓库，请直接拷贝文件或用 git 依赖。
 
-## 开发状态
+## 示例
 
-初始化内容位于 `develop`，后续使用 `feat/*`、`docs/*` 等开发分支，通过 PR 审阅；不直接推送 `main`。宿主功能仍需在 Polaris 提交配套 PR，本仓库单独更新不会使面板自动支持插件安装。
+- [`examples/hello`](examples/hello)：Node.js 参考插件，覆盖全流程，已用真实面板验证（安装握手、事件验签与去重、后台页面、用户续期幂等）。
+- [`examples/external-notify`](examples/external-notify)：通知类插件的清单写法。
+- 计划中：`webhook-discord`、`epay`（Go）、`sub-format`（Python）。
+
+## 插件索引
+
+[`registry/index.json`](registry/index.json) 是社区插件目录，欢迎 PR 添加你的插件。索引只是目录，不代表官方审核。
+
+## 开发
+
+默认分支 `develop`；请从它开 `feat/*`、`fix/*`、`docs/*` 分支，通过 PR 合入。协议变更需同时更新文档、Schema、SDK 和测试，并在 [CONTRIBUTING.md](CONTRIBUTING.md) 里说明宿主配套改动。CI 会跑三个 SDK 的测试并按 Schema 校验示例清单。
+
+仓库分工：本仓库负责协议、SDK、示例；面板侧的鉴权、事件投递、插件管理在 Polaris 仓库；授权服务在 polaris-license，插件框架不涉及授权签名私钥。

@@ -1,0 +1,25 @@
+{
+  "secret": "plsec_test_secret",
+  "timestamp": "1700000000",
+  "body": "{\"id\":\"evt_1\",\"type\":\"user.created\",\"created_at\":\"2026-10-18T00:00:00Z\",\"data\":{\"user\":{\"id\":\"u1\",\"username\":\"alice\"}}}",
+  "signature": "ad7d92f6db748c0f8bebab25712c640894f62af7d5e503f033dc4fd492294715",
+  "header": "t=1700000000,v1=ad7d92f6db748c0f8bebab25712c640894f62af7d5e503f033dc4fd492294715",
+  "now": 1700000100,
+  "jwt": {
+    "valid": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJwb2xhcmlzIiwiYXVkIjoiaGVsbG8iLCJzdWIiOiJ1MSIsIm5hbWUiOiJhbGljZSIsInNjb3BlIjoidXNlciIsImp0aSI6ImoxIiwiaWF0IjoxNzAwMDAwMDAwLCJleHAiOjE3MDAwMDA2MDB9.gN6WHOvDnYsh06C6wrhY1-Xxzlws6vX4cMbRhIzqNJI",
+    "claims": {
+      "iss": "polaris",
+      "aud": "hello",
+      "sub": "u1",
+      "name": "alice",
+      "scope": "user",
+      "jti": "j1",
+      "iat": 1700000000,
+      "exp": 1700000600
+    },
+    "wrongSecret": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJwb2xhcmlzIiwiYXVkIjoiaGVsbG8iLCJzdWIiOiJ1MSIsIm5hbWUiOiJhbGljZSIsInNjb3BlIjoidXNlciIsImp0aSI6ImoxIiwiaWF0IjoxNzAwMDAwMDAwLCJleHAiOjE3MDAwMDA2MDB9.cLu9ELv00K21eXTt-ORqFUEMqSEGdyFExp37-KtDCtU",
+    "expired": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJwb2xhcmlzIiwiYXVkIjoiaGVsbG8iLCJzdWIiOiJ1MSIsIm5hbWUiOiJhbGljZSIsInNjb3BlIjoidXNlciIsImp0aSI6ImoxIiwiaWF0IjoxNzAwMDAwMDAwLCJleHAiOjE3MDAwMDAwNTB9.OwkTmhy9r0xfJT7AWOr0e57YzmQ0A-7WsOCn59eB2iw",
+    "wrongAudience": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJwb2xhcmlzIiwiYXVkIjoib3RoZXIiLCJzdWIiOiJ1MSIsIm5hbWUiOiJhbGljZSIsInNjb3BlIjoidXNlciIsImp0aSI6ImoxIiwiaWF0IjoxNzAwMDAwMDAwLCJleHAiOjE3MDAwMDA2MDB9.aTfHsi7OTSJfgog1bozuRlUVIXndd6d-LaZvGMswPyc",
+    "wrongIssuer": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJ4IiwiYXVkIjoiaGVsbG8iLCJzdWIiOiJ1MSIsIm5hbWUiOiJhbGljZSIsInNjb3BlIjoidXNlciIsImp0aSI6ImoxIiwiaWF0IjoxNzAwMDAwMDAwLCJleHAiOjE3MDAwMDA2MDB9.9N6qPqhiTLqa60QZofwtxQig1CroywUqmPE0pX8Aqq0"
+  }
+}

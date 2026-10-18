@@ -6,7 +6,13 @@
 
 涉及宿主 scope、数据库事务、事件持久化、管理页面或订阅链路的改动，在 Polaris 仓库提交单独 PR，并在两边互相引用。
 
-初始化阶段可使用 Python 标准库检查示例 JSON：
+提交前运行：
+
+```bash
+(cd sdk/node && npm test); (cd sdk/python && python3 -m unittest); (cd sdk/go && go vet ./... && go test ./...)
+```
+
+检查示例 JSON 语法：
 
 ```bash
 python3 -m json.tool examples/external-notify/polaris-plugin.json
