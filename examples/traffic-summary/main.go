@@ -37,6 +37,15 @@ func main() {
 			http.Error(w, "authentication required", 401)
 			return
 		}
+		var config struct {
+			Settings struct {
+				Label string `json:"label"`
+			} `json:"settings"`
+		}
+		if err := service.Get(r.Context(), "/plugin/config", &config); err != nil {
+			http.Error(w, err.Error(), 502)
+			return
+		}
 		var summary any
 		if err := service.Get(r.Context(), "/stats/overview", &summary); err != nil {
 			http.Error(w, err.Error(), 502)
@@ -44,7 +53,7 @@ func main() {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
-		json.NewEncoder(w).Encode(summary)
+		json.NewEncoder(w).Encode(map[string]any{"label": config.Settings.Label, "traffic": summary})
 	})
 	address := os.Getenv("POLARIS_PLUGIN_LISTEN")
 	if address == "" {
