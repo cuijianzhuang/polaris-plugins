@@ -124,8 +124,9 @@ func (m Manifest) Validate() error {
 	if !versionPattern.MatchString(m.Version) || len(m.Version) > 64 {
 		return errors.New("version must be SemVer")
 	}
-	if i := strings.IndexByte(m.Version, '-'); i >= 0 {
-		for _, part := range strings.Split(strings.Split(m.Version[i+1:], "+")[0], ".") {
+	core := strings.Split(m.Version, "+")[0]
+	if i := strings.IndexByte(core, '-'); i >= 0 {
+		for _, part := range strings.Split(core[i+1:], ".") {
 			if len(part) > 1 && part[0] == '0' && strings.Trim(part, "0123456789") == "" {
 				return errors.New("numeric prerelease has leading zero")
 			}

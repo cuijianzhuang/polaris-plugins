@@ -35,6 +35,22 @@ func TestManifestRejectsUnsupportedAndAmbiguousInput(t *testing.T) {
 		}
 	}
 }
+func TestSemVerBuildAndPrerelease(t *testing.T) {
+	m := sample(t)
+	for _, version := range []string{"1.0.0+build-01", "1.0.0-alpha.1+001", "1.0.0"} {
+		m.Version = version
+		if err := m.Validate(); err != nil {
+			t.Fatalf("valid version %s: %v", version, err)
+		}
+	}
+	for _, version := range []string{"1.0.0-01", "01.0.0", "1.0.0-"} {
+		m.Version = version
+		if m.Validate() == nil {
+			t.Fatal("invalid version accepted", version)
+		}
+	}
+}
+
 func TestSettingsAndSignature(t *testing.T) {
 	m := sample(t)
 	plain, secrets, err := m.SplitSettings(map[string]any{"label": "demo", "service_token": "hidden"}, nil, nil)
