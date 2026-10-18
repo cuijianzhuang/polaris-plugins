@@ -1,0 +1,9 @@
+{
+  "name": "@polaris/plugin-sdk",
+  "version": "0.1.0",
+  "description": "Polaris plugin SDK: webhook/identity verification and panel API client",
+  "main": "index.js",
+  "license": "MIT",
+  "engines": { "node": ">=18" },
+  "scripts": { "test": "node --test" }
+}
