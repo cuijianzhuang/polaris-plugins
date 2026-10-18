@@ -51,6 +51,6 @@ SDK 尚未发布到包仓库，请直接拷贝文件或用 git 依赖。
 
 ## 开发
 
-默认分支 `develop`；请从它开 `feat/*`、`fix/*`、`docs/*` 分支，通过 PR 合入。协议变更需同时更新文档、Schema、SDK 和测试，并在 [CONTRIBUTING.md](CONTRIBUTING.md) 里说明宿主配套改动。CI 会跑三个 SDK 的测试并按 Schema 校验示例清单。
+默认分支 `main`；请从它开 `feat/*`、`fix/*`、`docs/*` 分支，通过 PR 合入。协议变更需同时更新文档、Schema、SDK 和测试，并在 [CONTRIBUTING.md](CONTRIBUTING.md) 里说明宿主配套改动。CI 会跑三个 SDK 的测试并按 Schema 校验示例清单。
 
 仓库分工：本仓库负责协议、SDK、示例；面板侧的鉴权、事件投递、插件管理在 Polaris 仓库；授权服务在 polaris-license，插件框架不涉及授权签名私钥。
