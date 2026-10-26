@@ -25,11 +25,12 @@ cd examples/hello && PORT=9100 node server.js   # 一个零依赖的完整参考
 | [安装握手](docs/install.md) | 面板如何把凭据交给插件，插件需要实现的端点 |
 | [页面与用户身份](docs/embedding.md) | 后台 iframe 页面、用户中心入口、身份令牌 |
 | [调用面板 API](docs/host-api.md) | 续期 / 加流量等常用调用 |
+| [订阅扩展与节点指标](docs/subscription.md) | 自定义订阅格式、改写节点、上报外部指标 |
 | [协议版本与设计差异](docs/compatibility.md) | 当前实现与 [设计文档](docs/design.md) 的差异 |
 
 ## SDK
 
-零依赖，做同样的事：验证面板的签名和身份令牌、封装常用面板 API（带幂等键）。三个 SDK 共用 [`testdata/vectors.json`](testdata/vectors.json) 测试向量。
+零依赖，做同样的事：验证面板的签名和身份令牌、封装常用面板 API（带幂等键）、按面板规则自查改写答复和指标。三个 SDK 共用 [`testdata/vectors.json`](testdata/vectors.json) 和 [`testdata/extensions.json`](testdata/extensions.json) 测试向量。
 
 | 语言 | 位置 | 测试 |
 | --- | --- | --- |
@@ -43,7 +44,9 @@ SDK 尚未发布到包仓库，请直接拷贝文件或用 git 依赖。
 
 - [`examples/hello`](examples/hello)：Node.js 参考插件，覆盖全流程，已用真实面板验证（安装握手、事件验签与去重、后台页面、用户续期幂等）。
 - [`examples/external-notify`](examples/external-notify)：通知类插件的清单写法。
-- 计划中：`webhook-discord`、`epay`（Go）、`sub-format`（Python）。
+- [`examples/sub-format`](examples/sub-format)：Python，自定义订阅格式（CSV）+ 改写节点（国旗、排序、过滤）。
+- [`examples/tcp-ping`](examples/tcp-ping)：Go，定时探测节点 TCP 延迟并上报为外部指标。
+- 计划中：`webhook-discord`、`epay`（Go）。
 
 ## 插件索引
 

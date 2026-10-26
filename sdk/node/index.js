@@ -53,6 +53,62 @@ function verifyIdentity(token, secret, { audience, scope, now = Date.now() / 100
   return claims
 }
 
+// ---- Subscription extensions and node metrics (protocol stage 4) ----
+
+/** Content types a subscription format may declare in its manifest. */
+const SUB_CONTENT_TYPES = ['text/plain', 'text/yaml', 'application/yaml', 'application/x-yaml', 'application/json', 'application/xml', 'text/xml']
+const METRIC_UNITS = ['ms', 's', 'Mbps', 'kbps', '%', 'count', 'bool']
+/** Metric names kept for the node's own figures. */
+const METRIC_RESERVED = ['cpu', 'mem', 'memory', 'rx', 'tx', 'load', 'online', 'status', 'heartbeat', 'traffic', 'up', 'down']
+const hasControl = (s) => /[\u0000-\u001f\u007f]/.test(s)
+const chars = (s) => [...s].length
+
+/**
+ * parseSigned verifies a signed panel request (render, transform, install,
+ * events) and returns its parsed JSON body, or null when the signature or
+ * the JSON is bad. Pass the RAW body.
+ */
+function parseSigned(header, secret, body, opts) {
+  if (!verifySignature(header, secret, body, opts)) return null
+  try { return JSON.parse(body) } catch { return null }
+}
+
+/**
+ * checkTransform applies the panel's rules for a /polaris/transform answer.
+ * Returns null when the panel would accept it, otherwise the reason. The
+ * panel skips a plugin whose answer breaks a rule, so test with this first.
+ */
+function checkTransform(request, response) {
+  const ids = new Set((request.nodes || []).map((n) => n.id))
+  if (!response || !Array.isArray(response.nodes)) return 'answer must be {"nodes": [...]}'
+  const seen = new Set()
+  for (const n of response.nodes) {
+    if (!n || typeof n.id !== 'string' || !ids.has(n.id)) return `unknown node id ${JSON.stringify(n && n.id)}`
+    if (seen.has(n.id)) return `node id ${n.id} listed twice`
+    seen.add(n.id)
+    if (n.name === undefined || n.name === null) continue
+    if (typeof n.name !== 'string') return `name of ${n.id} must be a string`
+    const name = n.name.trim()
+    if (name && (chars(name) > 100 || hasControl(name))) return `name of ${n.id} must be at most 100 characters without control characters`
+  }
+  return null
+}
+
+/** checkMetric applies the panel's rules for one reported metric; null = valid. */
+function checkMetric(m, now = new Date()) {
+  if (!m || typeof m.name !== 'string' || !/^[a-z][a-z0-9_.-]{0,39}$/.test(m.name)) return 'name must start with a lowercase letter, at most 40 characters'
+  if (METRIC_RESERVED.includes(m.name)) return `name ${m.name} is reserved`
+  if (!METRIC_UNITS.includes(m.unit)) return `unit must be one of ${METRIC_UNITS.join(', ')}`
+  if (typeof m.value !== 'number' || !Number.isFinite(m.value) || Math.abs(m.value) > 1e12) return 'value must be a finite number within ±1e12'
+  if (m.unit === 'bool' && m.value !== 0 && m.value !== 1) return 'a bool metric is 0 or 1'
+  if (m.label !== undefined && (typeof m.label !== 'string' || chars(m.label) > 40 || hasControl(m.label))) return 'label must be at most 40 characters without control characters'
+  if (m.at !== undefined && m.at !== '') {
+    const t = typeof m.at === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:\d\d)$/.test(m.at) ? Date.parse(m.at) : NaN
+    if (Number.isNaN(t) || t < now.getTime() - 86400e3 || t > now.getTime() + 300e3) return 'at must be an RFC 3339 time within the last 24 hours'
+  }
+  return null
+}
+
 /** PanelClient calls the panel API with the plugin's token. */
 class PanelClient {
   constructor(apiBase, token, { fetch: f = globalThis.fetch } = {}) {
@@ -88,6 +144,17 @@ class PanelClient {
     return this.request('POST', `/users/${encodeURIComponent(id)}/add-traffic`, { gb },
       idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {})
   }
+  /** nodes lists nodes (scope nodes:read). */
+  nodes() { return this.request('GET', '/nodes') }
+  /** reportMetrics stores readings on a node (scope nodes:metrics:write), at most 20 per call. */
+  reportMetrics(nodeId, metrics) {
+    return this.request('POST', `/nodes/${encodeURIComponent(nodeId)}/metrics`, { metrics })
+  }
+  /** externalMetrics reads every source's metrics for a node (scope nodes:read). */
+  externalMetrics(nodeId) { return this.request('GET', `/nodes/${encodeURIComponent(nodeId)}/metrics/external`) }
 }
 
-module.exports = { sign, signatureHeader, verifySignature, verifyIdentity, PanelClient, TOLERANCE }
+module.exports = {
+  sign, signatureHeader, verifySignature, verifyIdentity, parseSigned, checkTransform, checkMetric, PanelClient,
+  TOLERANCE, SUB_CONTENT_TYPES, METRIC_UNITS, METRIC_RESERVED,
+}

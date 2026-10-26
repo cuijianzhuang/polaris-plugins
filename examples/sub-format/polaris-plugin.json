@@ -1,0 +1,15 @@
+{
+  "id": "sub-format",
+  "name": "订阅扩展示例",
+  "version": "0.1.0",
+  "description": "示例：增加 CSV 订阅格式，并给节点名加国旗、按地区排序。",
+  "author": "Polaris",
+  "homepage": "https://github.com/cuijianzhuang/polaris-plugins/tree/main/examples/sub-format",
+  "minPanel": "0.1.60",
+  "subscription": {
+    "formats": [
+      { "name": "csv", "title": "CSV 节点清单", "contentType": "text/plain" }
+    ],
+    "transform": true
+  }
+}

@@ -3,61 +3,263 @@
   "$id": "https://github.com/cuijianzhuang/polaris-plugins/schema/polaris-plugin.schema.json",
   "title": "Polaris plugin manifest",
   "type": "object",
-  "required": ["id", "name", "version"],
+  "required": [
+    "id",
+    "name",
+    "version"
+  ],
   "properties": {
-    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,40}$" },
-    "name": { "type": "string", "minLength": 1, "maxLength": 64 },
-    "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+([-+][0-9A-Za-z.+-]+)?$" },
-    "description": { "type": "string", "maxLength": 500 },
-    "author": { "type": "string", "maxLength": 100 },
-    "homepage": { "type": "string", "pattern": "^https?://" },
-    "minPanel": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+([-+][0-9A-Za-z.+-]+)?$" },
-    "scopes": {
-      "type": "array", "uniqueItems": true,
-      "items": { "enum": ["users:read", "users:write", "users:renew", "users:traffic:add", "subs:read", "nodes:read", "traffic:read", "settings:read"] }
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,40}$"
     },
-    "events": { "type": "array", "items": { "type": "string", "pattern": "^(\\*|[a-z_]+\\.(\\*|[a-z_]+))$" } },
-    "webhookPath": { "$ref": "#/$defs/path" },
-    "pages": {
-      "type": "array", "maxItems": 10,
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+([-+][0-9A-Za-z.+-]+)?$"
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 500
+    },
+    "author": {
+      "type": "string",
+      "maxLength": 100
+    },
+    "homepage": {
+      "type": "string",
+      "pattern": "^https?://"
+    },
+    "minPanel": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+([-+][0-9A-Za-z.+-]+)?$"
+    },
+    "scopes": {
+      "type": "array",
+      "uniqueItems": true,
       "items": {
-        "type": "object", "required": ["id", "title", "path"],
+        "enum": [
+          "users:read",
+          "users:write",
+          "users:renew",
+          "users:traffic:add",
+          "users:plan",
+          "subs:read",
+          "nodes:read",
+          "nodes:metrics:write",
+          "traffic:read",
+          "settings:read"
+        ]
+      }
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^(\\*|[a-z_]+\\.(\\*|[a-z_]+))$"
+      }
+    },
+    "webhookPath": {
+      "$ref": "#/$defs/path"
+    },
+    "pages": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "path"
+        ],
         "properties": {
-          "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,31}$" },
-          "title": { "type": "string", "minLength": 1, "maxLength": 40 },
-          "icon": { "type": "string" },
-          "path": { "$ref": "#/$defs/path" }
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_-]{0,31}$"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "icon": {
+            "type": "string"
+          },
+          "path": {
+            "$ref": "#/$defs/path"
+          }
         }
       }
     },
     "portal": {
-      "type": "array", "maxItems": 5,
+      "type": "array",
+      "maxItems": 5,
       "items": {
-        "type": "object", "required": ["title", "path"],
-        "properties": { "title": { "type": "string", "minLength": 1, "maxLength": 40 }, "path": { "$ref": "#/$defs/path" } }
+        "type": "object",
+        "required": [
+          "title",
+          "path"
+        ],
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "path": {
+            "$ref": "#/$defs/path"
+          }
+        }
       }
     },
     "settings": {
-      "type": "array", "maxItems": 40,
+      "type": "array",
+      "maxItems": 40,
       "items": {
-        "type": "object", "required": ["key", "label", "type"],
+        "type": "object",
+        "required": [
+          "key",
+          "label",
+          "type"
+        ],
         "properties": {
-          "key": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,39}$" },
-          "label": { "type": "string", "minLength": 1, "maxLength": 60 },
-          "type": { "enum": ["string", "text", "secret", "number", "bool", "select", "url"] },
-          "required": { "type": "boolean" },
-          "default": { "type": "string" },
-          "hint": { "type": "string", "maxLength": 300 },
-          "options": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+          "key": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,39}$"
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60
+          },
+          "type": {
+            "enum": [
+              "string",
+              "text",
+              "secret",
+              "number",
+              "bool",
+              "select",
+              "url"
+            ]
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "default": {
+            "type": "string"
+          },
+          "hint": {
+            "type": "string",
+            "maxLength": 300
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1
+          }
         },
         "allOf": [
-          { "if": { "properties": { "type": { "const": "select" } } }, "then": { "required": ["options"] } },
-          { "if": { "properties": { "type": { "const": "secret" } } }, "then": { "not": { "required": ["default"] } } }
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "select"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "options"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "secret"
+                }
+              }
+            },
+            "then": {
+              "not": {
+                "required": [
+                  "default"
+                ]
+              }
+            }
+          }
         ]
+      }
+    },
+    "subscription": {
+      "type": "object",
+      "properties": {
+        "formats": {
+          "type": "array",
+          "maxItems": 5,
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "title",
+              "contentType"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9-]{1,23}$",
+                "not": {
+                  "enum": [
+                    "clash",
+                    "links",
+                    "loon",
+                    "quanx",
+                    "singbox",
+                    "surge",
+                    "html",
+                    "auto",
+                    "raw"
+                  ]
+                }
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 40
+              },
+              "contentType": {
+                "enum": [
+                  "text/plain",
+                  "text/yaml",
+                  "application/yaml",
+                  "application/x-yaml",
+                  "application/json",
+                  "application/xml",
+                  "text/xml"
+                ]
+              }
+            }
+          }
+        },
+        "transform": {
+          "type": "boolean"
+        }
       }
     }
   },
   "$defs": {
-    "path": { "type": "string", "maxLength": 200, "pattern": "^/(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))[^?#\\\\\\s]*$" }
+    "path": {
+      "type": "string",
+      "maxLength": 200,
+      "pattern": "^/(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))[^?#\\\\\\s]*$"
+    }
   }
 }

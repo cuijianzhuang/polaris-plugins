@@ -1,0 +1,14 @@
+{
+  "id": "tcp-ping",
+  "name": "TCP 延迟上报示例",
+  "version": "0.1.0",
+  "description": "示例：定时从插件所在机器 TCP 连接每个节点的入站端口，把延迟和可达性上报为节点外部指标。",
+  "author": "Polaris",
+  "homepage": "https://github.com/cuijianzhuang/polaris-plugins/tree/main/examples/tcp-ping",
+  "minPanel": "0.1.149",
+  "scopes": ["nodes:read", "nodes:metrics:write"],
+  "settings": [
+    { "key": "site", "label": "探测点名称", "type": "string", "default": "插件", "hint": "显示在指标名称前，例如「上海电信」" },
+    { "key": "interval", "label": "间隔（秒）", "type": "number", "default": "60", "hint": "最少 30 秒" }
+  ]
+}
