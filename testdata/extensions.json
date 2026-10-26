@@ -1,0 +1,304 @@
+{
+  "transform": {
+    "request": {
+      "format": "clash",
+      "user": "alice",
+      "nodes": [
+        {
+          "id": "0",
+          "name": "东京 VLESS",
+          "region": "JP",
+          "protocol": "vless",
+          "server": "203.0.113.9",
+          "port": 443
+        },
+        {
+          "id": "1",
+          "name": "香港 Trojan",
+          "region": "HK",
+          "protocol": "trojan",
+          "server": "198.51.100.7",
+          "port": 443
+        }
+      ]
+    },
+    "cases": [
+      {
+        "name": "reorder and rename",
+        "ok": true,
+        "response": {
+          "nodes": [
+            {
+              "id": "1",
+              "name": "🇭🇰 香港"
+            },
+            {
+              "id": "0"
+            }
+          ]
+        }
+      },
+      {
+        "name": "filter everything",
+        "ok": true,
+        "response": {
+          "nodes": []
+        }
+      },
+      {
+        "name": "100-character name",
+        "ok": true,
+        "response": {
+          "nodes": [
+            {
+              "id": "0",
+              "name": "东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东"
+            }
+          ]
+        }
+      },
+      {
+        "name": "blank name keeps the old one",
+        "ok": true,
+        "response": {
+          "nodes": [
+            {
+              "id": "0",
+              "name": "   "
+            }
+          ]
+        }
+      },
+      {
+        "name": "nodes missing",
+        "ok": false,
+        "response": {}
+      },
+      {
+        "name": "nodes not a list",
+        "ok": false,
+        "response": {
+          "nodes": {}
+        }
+      },
+      {
+        "name": "unknown id",
+        "ok": false,
+        "response": {
+          "nodes": [
+            {
+              "id": "7"
+            }
+          ]
+        }
+      },
+      {
+        "name": "numeric id",
+        "ok": false,
+        "response": {
+          "nodes": [
+            {
+              "id": 0
+            }
+          ]
+        }
+      },
+      {
+        "name": "duplicate id",
+        "ok": false,
+        "response": {
+          "nodes": [
+            {
+              "id": "0"
+            },
+            {
+              "id": "0"
+            }
+          ]
+        }
+      },
+      {
+        "name": "101-character name",
+        "ok": false,
+        "response": {
+          "nodes": [
+            {
+              "id": "0",
+              "name": "东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东东"
+            }
+          ]
+        }
+      },
+      {
+        "name": "control character",
+        "ok": false,
+        "response": {
+          "nodes": [
+            {
+              "id": "0",
+              "name": "a\nb"
+            }
+          ]
+        }
+      },
+      {
+        "name": "name not a string",
+        "ok": false,
+        "response": {
+          "nodes": [
+            {
+              "id": "0",
+              "name": 5
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "metrics": {
+    "now": "2026-10-26T08:00:00Z",
+    "cases": [
+      {
+        "ok": true,
+        "metric": {
+          "name": "latency.sh-ct",
+          "label": "上海电信",
+          "unit": "ms",
+          "value": 38.5
+        }
+      },
+      {
+        "ok": true,
+        "metric": {
+          "name": "speed",
+          "unit": "Mbps",
+          "value": 920,
+          "at": "2026-10-26T07:00:00Z"
+        }
+      },
+      {
+        "ok": true,
+        "metric": {
+          "name": "reachable",
+          "unit": "bool",
+          "value": 1
+        }
+      },
+      {
+        "ok": true,
+        "metric": {
+          "name": "x",
+          "unit": "count",
+          "value": -1000000000000
+        }
+      },
+      {
+        "ok": true,
+        "metric": {
+          "name": "latency",
+          "unit": "ms",
+          "value": 1,
+          "label": "电电电电电电电电电电电电电电电电电电电电电电电电电电电电电电电电电电电电电电电电"
+        }
+      },
+      {
+        "ok": false,
+        "metric": {
+          "name": "Latency",
+          "unit": "ms",
+          "value": 1
+        }
+      },
+      {
+        "ok": false,
+        "metric": {
+          "name": "cpu",
+          "unit": "%",
+          "value": 1
+        }
+      },
+      {
+        "ok": false,
+        "metric": {
+          "name": "latency",
+          "value": 1
+        }
+      },
+      {
+        "ok": false,
+        "metric": {
+          "name": "latency",
+          "unit": "h",
+          "value": 1
+        }
+      },
+      {
+        "ok": false,
+        "metric": {
+          "name": "latency",
+          "unit": "ms"
+        }
+      },
+      {
+        "ok": false,
+        "metric": {
+          "name": "latency",
+          "unit": "ms",
+          "value": "1"
+        }
+      },
+      {
+        "ok": false,
+        "metric": {
+          "name": "x",
+          "unit": "count",
+          "value": 1000000000001
+        }
+      },
+      {
+        "ok": false,
+        "metric": {
+          "name": "reachable",
+          "unit": "bool",
+          "value": 0.5
+        }
+      },
+      {
+        "ok": false,
+        "metric": {
+          "name": "latency",
+          "unit": "ms",
+          "value": 1,
+          "label": "电电电电电电电电电电电电电电电电电电电电电电电电电电电电电电电电电电电电电电电电电"
+        }
+      },
+      {
+        "ok": false,
+        "metric": {
+          "name": "latency",
+          "unit": "ms",
+          "value": 1,
+          "at": "2026-10-25T07:59:00Z"
+        }
+      },
+      {
+        "ok": false,
+        "metric": {
+          "name": "latency",
+          "unit": "ms",
+          "value": 1,
+          "at": "2026-10-26T08:06:00Z"
+        }
+      },
+      {
+        "ok": false,
+        "metric": {
+          "name": "latency",
+          "unit": "ms",
+          "value": 1,
+          "at": "yesterday"
+        }
+      }
+    ]
+  }
+}

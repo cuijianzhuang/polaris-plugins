@@ -54,3 +54,46 @@ class Tests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+EXT = json.load(open(os.path.join(os.path.dirname(__file__), "..", "..", "testdata", "extensions.json"), encoding="utf-8"))
+
+
+class ExtensionTests(unittest.TestCase):
+    def test_check_transform(self):
+        for c in EXT["transform"]["cases"]:
+            err = sdk.check_transform(EXT["transform"]["request"], c["response"])
+            self.assertEqual(err is None, c["ok"], "%s: %s" % (c["name"], err))
+
+    def test_check_metric(self):
+        now = sdk._parse_time(EXT["metrics"]["now"])
+        for c in EXT["metrics"]["cases"]:
+            err = sdk.check_metric(c["metric"], now)
+            self.assertEqual(err is None, c["ok"], "%s: %s" % (c["metric"], err))
+
+    def test_parse_signed(self):
+        self.assertEqual(sdk.parse_signed(V["header"], V["secret"], V["body"], now=V["now"])["id"], "evt_1")
+        self.assertIsNone(sdk.parse_signed(V["header"], "x", V["body"], now=V["now"]))
+        self.assertIsNone(sdk.parse_signed(sdk.signature_header("k", "nope"), "k", "nope"))
+
+    def test_report_metrics(self):
+        seen = {}
+
+        class Resp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                return b'{"stored":1}'
+
+        def opener(req, timeout):
+            seen["req"] = req
+            return Resp()
+
+        c = sdk.PanelClient("http://p/api/v1", "t", opener=opener)
+        c.report_metrics("n/1", [{"name": "latency", "unit": "ms", "value": 3}])
+        self.assertEqual(seen["req"].full_url, "http://p/api/v1/nodes/n%2F1/metrics")
+        self.assertEqual(json.loads(seen["req"].data), {"metrics": [{"name": "latency", "unit": "ms", "value": 3}]})

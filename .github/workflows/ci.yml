@@ -18,6 +18,10 @@ jobs:
         run: cd sdk/python && python3 -m unittest -v
       - name: Go SDK
         run: cd sdk/go && go vet ./... && go test ./...
+      - name: Examples build
+        run: |
+          cd examples/tcp-ping && go vet ./... && go build ./... && cd ../..
+          python3 -m py_compile examples/sub-format/server.py
       - name: Example manifests match the schema
         run: |
           npm i --no-save ajv@8

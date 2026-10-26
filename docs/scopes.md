@@ -10,8 +10,10 @@
 | `users:write` | 创建 / 修改 / 删除用户，批量，重置流量 / 订阅令牌，设备与节点配额 |
 | `users:renew` | `POST /users/:id/renew {days, resetTraffic}` |
 | `users:traffic:add` | `POST /users/:id/add-traffic {gb}` |
+| `users:plan` | `GET /plans`、`POST /users/:id/plan`（开通 / 续订套餐）、`GET /traffic-packs`、`POST /users/:id/pack`（加购流量包） |
 | `subs:read` | `GET /users/:id/links`、`/users/:id/sub-check`（含代理链接和凭据，**敏感**） |
-| `nodes:read` | `GET /nodes`、`/nodes/:id`、`/inbounds` |
+| `nodes:read` | `GET /nodes`、`/nodes/:id`、`/inbounds`、`/nodes/:id/metrics/external` |
+| `nodes:metrics:write` | `POST /nodes/:id/metrics`：只写带来源的[外部指标](subscription.md#上报节点外部指标)，不能读或改节点（面板 ≥ 0.1.149） |
 | `traffic:read` | `GET /stats/overview`、`/stats/traffic`、`/stats/nodes`、`/stats/tags` |
 | `settings:read` | `GET /settings` |
 
