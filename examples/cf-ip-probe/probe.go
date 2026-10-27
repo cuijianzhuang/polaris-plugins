@@ -1,23 +1,29 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/csv"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand/v2"
 	"net"
 	"net/http"
 	"net/netip"
-	"sort"
+	"net/url"
+	"os"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
-// cloudflareV4 is https://www.cloudflare.com/ips-v4 (use -ranges-url to
-// fetch the current list instead).
+// cloudflareV4 is https://www.cloudflare.com/ips-v4 (use -ranges-url or -f
+// to supply the current list instead).
 var cloudflareV4 = []string{
 	"173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22", "103.31.4.0/22",
 	"141.101.64.0/18", "108.162.192.0/18", "190.93.240.0/20", "188.114.96.0/20",
@@ -29,18 +35,22 @@ var cloudflareV4 = []string{
 type Result struct {
 	IP        string  `json:"ip"`
 	LatencyMs float64 `json:"latencyMs"`
-	Loss      float64 `json:"loss"` // 0–1
-	Colo      string  `json:"-"`    // Cloudflare data centre, from /cdn-cgi/trace
+	Loss      float64 `json:"loss"`            // 0–1
+	Speed     float64 `json:"speed,omitempty"` // MB/s, when download-tested
+	Colo      string  `json:"colo,omitempty"`  // CDN data centre, e.g. HKG
 }
 
-// parseRanges reads IPv4 CIDRs, one per line; blank lines and # comments
-// are skipped.
+// parseRanges reads IPv4 CIDRs (or single addresses), one per line; blank
+// lines and # comments are skipped.
 func parseRanges(text string) ([]netip.Prefix, error) {
 	var out []netip.Prefix
 	for _, line := range strings.Split(text, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
+		}
+		if !strings.Contains(line, "/") {
+			line += "/32"
 		}
 		p, err := netip.ParsePrefix(line)
 		if err != nil {
@@ -57,32 +67,54 @@ func parseRanges(text string) ([]netip.Prefix, error) {
 	return out, nil
 }
 
-// sample picks about n distinct addresses spread over the ranges in
-// proportion to their size, at least one per range. Network and broadcast
-// style addresses (.0 / .255) are skipped.
-func sample(ranges []netip.Prefix, n int, rng *rand.Rand) []netip.Addr {
-	var total float64
+// blocks splits the ranges into /24 blocks (a smaller range is one block),
+// without duplicates when ranges overlap.
+func blocks(ranges []netip.Prefix) []netip.Prefix {
+	seen := map[netip.Prefix]bool{}
+	var out []netip.Prefix
 	for _, p := range ranges {
-		total += float64(uint64(1) << (32 - p.Bits()))
-	}
-	seen := map[netip.Addr]bool{}
-	var out []netip.Addr
-	for _, p := range ranges {
-		size := uint64(1) << (32 - p.Bits())
-		want := max(1, int(float64(n)*float64(size)/total+0.5))
-		base := p.Addr().As4()
-		start := uint64(base[0])<<24 | uint64(base[1])<<16 | uint64(base[2])<<8 | uint64(base[3])
-		for tries := 0; want > 0 && tries < want*20; tries++ {
-			v := start + rng.Uint64N(size)
-			a := netip.AddrFrom4([4]byte{byte(v >> 24), byte(v >> 16), byte(v >> 8), byte(v)})
-			last := byte(v)
-			if last == 0 || last == 255 || seen[a] {
-				continue
+		if p.Bits() >= 24 {
+			if !seen[p] {
+				seen[p] = true
+				out = append(out, p)
 			}
-			seen[a] = true
-			out = append(out, a)
-			want--
+			continue
 		}
+		b := p.Addr().As4()
+		start := uint32(b[0])<<24 | uint32(b[1])<<16 | uint32(b[2])<<8
+		for i := uint32(0); i < 1<<(24-p.Bits()); i++ {
+			v := start + i<<8
+			q := netip.PrefixFrom(netip.AddrFrom4([4]byte{byte(v >> 24), byte(v >> 16), byte(v >> 8), 0}), 24)
+			if !seen[q] {
+				seen[q] = true
+				out = append(out, q)
+			}
+		}
+	}
+	return out
+}
+
+// sample picks one random address in each of n random /24 blocks (n <= 0:
+// every block), the way CloudflareSpeedTest does. .0 and .255 are skipped.
+func sample(ranges []netip.Prefix, n int, rng *rand.Rand) []netip.Addr {
+	bs := blocks(ranges)
+	rng.Shuffle(len(bs), func(i, j int) { bs[i], bs[j] = bs[j], bs[i] })
+	if n > 0 && n < len(bs) {
+		bs = bs[:n]
+	}
+	out := make([]netip.Addr, 0, len(bs))
+	for _, p := range bs {
+		b := p.Addr().As4()
+		size := uint32(1) << (32 - p.Bits())
+		base := uint32(b[0])<<24 | uint32(b[1])<<16 | uint32(b[2])<<8 | uint32(b[3])
+		v := base
+		for tries := 0; tries < 8; tries++ {
+			v = base + rng.Uint32N(size)
+			if last := byte(v); last != 0 && last != 255 {
+				break
+			}
+		}
+		out = append(out, netip.AddrFrom4([4]byte{byte(v >> 24), byte(v >> 16), byte(v >> 8), byte(v)}))
 	}
 	return out
 }
@@ -90,7 +122,7 @@ func sample(ranges []netip.Prefix, n int, rng *rand.Rand) []netip.Addr {
 // tcpTest connects to ip:port tries times; latency is the average of the
 // successful connects.
 func tcpTest(ctx context.Context, ip netip.Addr, port, tries int, timeout time.Duration) Result {
-	addr := net.JoinHostPort(ip.String(), fmt.Sprint(port))
+	addr := net.JoinHostPort(ip.String(), strconv.Itoa(port))
 	var ok int
 	var sum time.Duration
 	d := net.Dialer{Timeout: timeout}
@@ -137,33 +169,62 @@ func testAll(ctx context.Context, ips []netip.Addr, port, tries, workers int, ti
 	return out
 }
 
-// rank sorts by loss, then latency, the way the panel ranks reports.
+// rank sorts the way the panel ranks reports: loss, then download speed
+// (fastest first; untested IPs count as 0), then latency.
 func rank(rs []Result) {
-	sort.SliceStable(rs, func(i, j int) bool {
-		if rs[i].Loss != rs[j].Loss {
-			return rs[i].Loss < rs[j].Loss
-		}
-		return rs[i].LatencyMs < rs[j].LatencyMs
+	slices.SortStableFunc(rs, func(a, b Result) int {
+		return cmp.Or(cmp.Compare(a.Loss, b.Loss), cmp.Compare(b.Speed, a.Speed), cmp.Compare(a.LatencyMs, b.LatencyMs))
 	})
+}
+
+// filter holds the -tl/-tll/-tlr/-sl/-colo limits.
+type filter struct {
+	MaxLatency, MinLatency, MaxLoss, MinSpeed float64
+	Colos                                     map[string]bool // empty: any
+}
+
+func (f filter) latencyOK(r Result) bool {
+	return r.LatencyMs <= f.MaxLatency && r.LatencyMs >= f.MinLatency && r.Loss <= f.MaxLoss
+}
+
+func (f filter) coloOK(colo string) bool {
+	return len(f.Colos) == 0 || f.Colos[strings.ToUpper(colo)]
+}
+
+// parseColos reads "HKG,lax sjc" into a set.
+func parseColos(s string) map[string]bool {
+	out := map[string]bool{}
+	for _, c := range strings.FieldsFunc(s, func(r rune) bool { return r == ',' || r == ' ' }) {
+		out[strings.ToUpper(c)] = true
+	}
+	return out
 }
 
 // rootCAs verifies the edge's certificate (nil = the system pool; tests
 // replace it).
 var rootCAs *x509.CertPool
 
+// viaIP is an HTTP client that sends every request to ip:port, with TLS
+// checked against the URL's host name.
+func viaIP(ip string, port int, host string, timeout time.Duration) (*http.Client, func()) {
+	tr := &http.Transport{
+		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return (&net.Dialer{Timeout: timeout}).DialContext(ctx, network, net.JoinHostPort(ip, strconv.Itoa(port)))
+		},
+		TLSClientConfig:     &tls.Config{ServerName: host, RootCAs: rootCAs},
+		TLSHandshakeTimeout: timeout,
+		DisableCompression:  true,
+	}
+	return &http.Client{Transport: tr, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, tr.CloseIdleConnections
+}
+
 // verify fetches https://host/cdn-cgi/trace through the IP: a working
 // Cloudflare edge answers with its data centre ("colo="). An IP that only
 // accepts TCP but does not serve the site is dropped.
 func verify(ctx context.Context, ip, host string, port int, timeout time.Duration) (string, error) {
-	tr := &http.Transport{
-		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
-			return (&net.Dialer{Timeout: timeout}).DialContext(ctx, network, net.JoinHostPort(ip, fmt.Sprint(port)))
-		},
-		TLSClientConfig:     &tls.Config{ServerName: host, RootCAs: rootCAs},
-		TLSHandshakeTimeout: timeout,
-	}
-	defer tr.CloseIdleConnections()
-	cl := &http.Client{Transport: tr, Timeout: 3 * timeout}
+	cl, done := viaIP(ip, port, host, timeout)
+	defer done()
+	cl.Timeout = 3 * timeout
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("https://%s:%d/cdn-cgi/trace", host, port), nil)
 	if err != nil {
 		return "", err
@@ -185,19 +246,185 @@ func verify(ctx context.Context, ip, host string, port int, timeout time.Duratio
 	return "", fmt.Errorf("not a Cloudflare edge (no colo in trace)")
 }
 
-// verifyTop checks candidates in rank order until want of them pass.
-func verifyTop(ctx context.Context, rs []Result, want int, host string, port int, timeout time.Duration) []Result {
-	var out []Result
-	for _, r := range rs {
-		if len(out) >= want {
+// minDownload is the least a download test must fetch to count.
+const minDownload = 64 << 10
+
+// download fetches rawURL through ip:port for up to limit and returns the
+// speed in MB/s and the data centre from the CF-RAY header.
+func download(ctx context.Context, ip string, port int, rawURL string, limit, timeout time.Duration) (float64, string, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return 0, "", err
+	}
+	u.Host = net.JoinHostPort(u.Hostname(), strconv.Itoa(port))
+	cl, done := viaIP(ip, port, u.Hostname(), timeout)
+	defer done()
+	ctx, cancel := context.WithTimeout(ctx, limit+3*timeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return 0, "", err
+	}
+	req.Header.Set("User-Agent", "cf-ip-probe/"+version)
+	resp, err := cl.Do(req)
+	if err != nil {
+		return 0, "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, "", fmt.Errorf("download: status %s", resp.Status)
+	}
+	colo := ""
+	if ray := resp.Header.Get("Cf-Ray"); strings.Contains(ray, "-") {
+		colo = ray[strings.LastIndex(ray, "-")+1:]
+	}
+	buf := make([]byte, 32<<10)
+	var n int64
+	start := time.Now()
+	for time.Since(start) < limit {
+		m, err := resp.Body.Read(buf)
+		n += int64(m)
+		if err != nil {
+			if errors.Is(err, io.EOF) || errors.Is(err, context.DeadlineExceeded) {
+				break
+			}
+			if n < minDownload {
+				return 0, colo, err
+			}
 			break
 		}
-		colo, err := verify(ctx, r.IP, host, port, timeout)
+	}
+	el := time.Since(start).Seconds()
+	if n < minDownload || el <= 0 {
+		return 0, colo, fmt.Errorf("download: only %d bytes", n)
+	}
+	return float64(n) / el / (1 << 20), colo, nil
+}
+
+// picker turns ranked TCP results into the IPs to report.
+type picker struct {
+	Top                int
+	Host, URL          string
+	Port               int
+	Verify             bool
+	DownloadN          int // IPs to download-test; 0 = none
+	DownloadFor        time.Duration
+	Timeout            time.Duration
+	Filter             filter
+	verify             func(ctx context.Context, ip, host string, port int, timeout time.Duration) (string, error)
+	download           func(ctx context.Context, ip string, port int, rawURL string, limit, timeout time.Duration) (float64, string, error)
+	checked, attempted int
+}
+
+// pick walks the candidates best first: HTTPS check (-verify), data centre
+// (-colo), then a download test for the first DownloadN that pass (-sl
+// drops slow ones and the next candidate is tried). With -sl set only
+// download-tested IPs are reported; otherwise the remaining slots are
+// filled with checked IPs that were not download-tested.
+func (p *picker) pick(ctx context.Context, cands []Result) []Result {
+	if p.verify == nil {
+		p.verify = verify
+	}
+	if p.download == nil {
+		p.download = download
+	}
+	var out []Result
+	tested := 0
+	for _, r := range cands {
+		if len(out) >= p.Top || p.checked >= p.Top*20 || ctx.Err() != nil {
+			break
+		}
+		p.checked++
+		if p.Verify {
+			colo, err := p.verify(ctx, r.IP, p.Host, p.Port, p.Timeout)
+			if err != nil {
+				continue
+			}
+			r.Colo = colo
+			if !p.Filter.coloOK(colo) {
+				continue
+			}
+		}
+		if tested < p.DownloadN && p.attempted < p.DownloadN*3 {
+			p.attempted++
+			speed, colo, err := p.download(ctx, r.IP, p.Port, p.URL, p.DownloadFor, p.Timeout)
+			if err != nil {
+				continue
+			}
+			if r.Colo == "" {
+				r.Colo = colo
+			}
+			if speed < p.Filter.MinSpeed || !p.Filter.coloOK(r.Colo) {
+				continue
+			}
+			r.Speed = speed
+			tested++
+		} else if p.Filter.MinSpeed > 0 || !p.Filter.coloOK(r.Colo) {
+			continue
+		}
+		out = append(out, r)
+	}
+	rank(out)
+	return out
+}
+
+// readCSV reads a CloudflareSpeedTest result.csv: IP, sent, received,
+// loss, average latency, download speed (MB/s)[, colo]. The header and
+// rows that do not start with an IP are skipped.
+func readCSV(path string) ([]Result, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	cr := csv.NewReader(f)
+	cr.FieldsPerRecord = -1
+	cr.TrimLeadingSpace = true
+	var out []Result
+	for {
+		rec, err := cr.Read()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
+		if len(rec) < 5 {
+			continue
+		}
+		ip, err := netip.ParseAddr(strings.TrimPrefix(strings.TrimSpace(rec[0]), "\ufeff"))
 		if err != nil {
 			continue
 		}
-		r.Colo = colo
+		num := func(i int) float64 {
+			if i >= len(rec) {
+				return 0
+			}
+			v, _ := strconv.ParseFloat(strings.TrimSpace(rec[i]), 64)
+			return v
+		}
+		r := Result{IP: ip.String(), Loss: min(max(num(3), 0), 1), LatencyMs: max(num(4), 0), Speed: max(num(5), 0)}
+		if len(rec) > 6 {
+			if c := strings.ToUpper(strings.TrimSpace(rec[6])); len(c) >= 2 && len(c) <= 5 && c != "N/A" {
+				r.Colo = c
+			}
+		}
 		out = append(out, r)
 	}
-	return out
+	if len(out) == 0 {
+		return nil, fmt.Errorf("%s: no results (expected CloudflareSpeedTest result.csv)", path)
+	}
+	return out, nil
+}
+
+// fromCSV applies the limits to imported results and keeps the top n.
+func fromCSV(rs []Result, f filter, n int) []Result {
+	var out []Result
+	for _, r := range rs {
+		if f.latencyOK(r) && r.Speed >= f.MinSpeed && f.coloOK(r.Colo) {
+			out = append(out, r)
+		}
+	}
+	rank(out)
+	return out[:min(n, len(out))]
 }
