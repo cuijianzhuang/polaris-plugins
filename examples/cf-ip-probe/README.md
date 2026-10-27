@@ -38,7 +38,7 @@ curl -fsSL https://github.com/cuijianzhuang/polaris-plugins/releases/latest/down
 
 1. **延迟**：Cloudflare 的每个 /24 网段随机取一个 IP（约 6000 个），各做 4 次 TCP 连接，算平均延迟和丢包率。`-tl` / `-tll` / `-tlr` 过滤延迟和丢包。
 2. **验证**：按丢包、延迟从好到差，访问 `https://<host>/cdn-cgi/trace`，能返回 Cloudflare 机房代码才算可用，同时得到机房（`-colo` 只保留指定机房）。有些网络会让任何 IP 的 TCP 都「连得上」，这一步把这类假结果去掉。
-3. **下载测速**：对通过验证的前 `-dn` 个 IP 下载测速 `-dt` 秒；低于 `-sl` 的丢掉，换下一个。
+3. **下载测速**：对通过验证的前 `-dn` 个 IP 下载测速 `-dt` 秒；低于 `-sl` 的丢掉，换下一个。下载失败的 IP 照样上报（只是没有速度）；连续失败 3 次就放弃本轮下载测速，日志里会写原因。
 4. **上报**：前 `-top` 个按丢包、下载速度、延迟排序，上报到 `POST {api}/cdn-profiles/{id}/preferred-ips`（带速度和机房，面板卡片里能看到）。
 
 没有可用 IP 时不上报，面板继续用上一次的列表。
@@ -60,15 +60,26 @@ curl -fsSL https://github.com/cuijianzhuang/polaris-plugins/releases/latest/down
 | `-dn` / `-dt` | 5 / 5s | 下载测速的 IP 数 / 每个 IP 的时长 | 同名 |
 | `-sl` | 0 | 下载速度下限（MB/s）；设置后只上报测过速的 IP | 同名 |
 | `-dd` | 关 | 不做下载测速，只按延迟排序 | 同名 |
-| `-url` | `https://speed.cloudflare.com/__down?bytes=200000000` | 下载测速用的文件；最好换成你自己 Cloudflare 站点上的大文件 | 同名 |
+| `-url` | `https://speed.cloudflare.com/__down?bytes=50000000` | 下载测速用的文件；最好换成你自己 Cloudflare 站点上的大文件 | 同名 |
 | `-f` / `-ranges-url` | 内置列表 | 从文件 / URL 读取 IP 段（每行一个 CIDR 或 IP） | `-f` |
 | `-csv` | | 不自己测，上报 CloudflareSpeedTest 的 `result.csv` | |
 | `-top` | 10 | 上报个数（最多 200） | |
 | `-interval` | 1h | 每轮间隔，最少 10 分钟 | |
 | `-verify` | true | 关掉后不做 HTTPS 验证（不推荐） | |
+| `-debug` | 关 | 日志里写出每个 IP 没通过 HTTPS 验证或下载测速的原因 | 同名 |
 | `-once` / `-dry-run` / `-version` | | 只跑一轮 / 只打印不上报 / 显示版本 | |
 
 **流量**：默认每轮下载测速约 5 个 IP × 5 秒，以 10 MB/s 计约 250 MB；每小时一轮一天约 6 GB。按流量计费的线路请加大 `-interval`、减小 `-dn` / `-dt`，或用 `-dd` 关掉下载测速。
+
+## 排查
+
+每轮结束有一行汇总，例如 `HTTPS check: 12 of 200 passed, most common failure: …; download test: 0 of 3 succeeded, most common failure: …`：
+
+- **HTTPS 验证大多失败**：`-host` 要填已经开了 Cloudflare 代理（橙色云朵）的域名；超时多说明这条线路到 Cloudflare 很差，可以用 `-tl` 只留低延迟 IP，或换端口（`-port 2053` / `8443` 等，配置档也要用同一个端口）。
+- **下载测速失败**：默认测速文件在 speed.cloudflare.com，部分国内网络访问不了。换成你自己 Cloudflare 站点上的大文件（`-url https://cdn.example.com/100mb.bin`），或用 `-dd` 关掉下载测速。
+- 加 `-debug` 能看到每个 IP 的失败原因。
+
+修改参数：编辑 `/etc/cf-ip-probe.env` 里的 `PROBE_ARGS`（例如 `PROBE_ARGS='-dd -debug'`）后重启服务，或带 `--args "…"` 重新运行安装脚本。
 
 ## 搭配 CloudflareSpeedTest 使用
 

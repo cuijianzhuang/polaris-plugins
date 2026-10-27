@@ -42,7 +42,7 @@ type config struct {
 	Port, Sample, Tries, Workers, Top, DownloadN                     int
 	Timeout, Interval, DownloadFor                                   time.Duration
 	MaxLatency, MinLatency, MaxLoss, MinSpeed                        float64
-	Verify, NoDownload, Once, DryRun, Version                        bool
+	Verify, NoDownload, Once, DryRun, Version, Debug                 bool
 }
 
 func envOr(k, d string) string {
@@ -77,13 +77,14 @@ func parseFlags(args []string) (config, error) {
 	fs.IntVar(&c.DownloadN, "dn", 5, "IPs to download-test, best first")
 	fs.DurationVar(&c.DownloadFor, "dt", 5*time.Second, "download test length per IP")
 	fs.Float64Var(&c.MinSpeed, "sl", 0, "drop IPs slower than this (MB/s); when set, only download-tested IPs are reported")
-	fs.StringVar(&c.URL, "url", envOr("PROBE_URL", "https://speed.cloudflare.com/__down?bytes=200000000"), "download test file; a large file on your own Cloudflare site is most reliable (env PROBE_URL)")
+	fs.StringVar(&c.URL, "url", envOr("PROBE_URL", "https://speed.cloudflare.com/__down?bytes=50000000"), "download test file; a large file on your own Cloudflare site is most reliable (env PROBE_URL)")
 	fs.StringVar(&c.CSV, "csv", "", "report a CloudflareSpeedTest result.csv instead of testing (re-read every round)")
 	fs.DurationVar(&c.Interval, "interval", time.Hour, "time between rounds")
 	fs.BoolVar(&c.Verify, "verify", true, "check each IP serves HTTPS through /cdn-cgi/trace (gives the data centre)")
 	fs.BoolVar(&c.Once, "once", false, "run one round and exit")
 	fs.BoolVar(&c.DryRun, "dry-run", false, "print the result instead of reporting it")
 	fs.BoolVar(&c.Version, "version", false, "print the version and exit")
+	fs.BoolVar(&c.Debug, "debug", false, "log why each IP failed the HTTPS check or download test")
 	if err := fs.Parse(args); err != nil {
 		return c, err
 	}
@@ -190,10 +191,10 @@ func round(ctx context.Context, c config, rng *rand.Rand) ([]Result, error) {
 	}
 	log.Printf("tested %d IPs, %d answered, %d within the latency/loss limits", len(ips), len(tested), len(cands))
 	p := &picker{Top: c.Top, Host: c.Host, URL: c.URL, Port: c.Port, Verify: c.Verify, DownloadN: c.DownloadN,
-		DownloadFor: c.DownloadFor, Timeout: 2 * c.Timeout, Filter: f}
+		DownloadFor: c.DownloadFor, Timeout: 2 * c.Timeout, Filter: f, Debug: c.Debug}
 	out := p.pick(ctx, cands)
-	if p.attempted > 0 {
-		log.Printf("checked %d candidates, download-tested %d", p.checked, p.attempted)
+	if s := p.summary(); s != "" {
+		log.Print(s)
 	}
 	return out, nil
 }
