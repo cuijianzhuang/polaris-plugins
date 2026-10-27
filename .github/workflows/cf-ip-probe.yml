@@ -1,0 +1,76 @@
+name: cf-ip-probe
+# Builds cf-ip-probe for every platform on pull requests that touch it
+# (archives attached to the run), and publishes a GitHub release when a tag
+# cf-ip-probe-vX.Y.Z is pushed. The installer
+# (examples/cf-ip-probe/scripts/install.sh) downloads from those releases.
+# Releases are cut only from the cuijianzhuang copy.
+on:
+  push:
+    tags: ['cf-ip-probe-v*']
+  pull_request:
+    paths:
+      - 'examples/cf-ip-probe/**'
+      - '.github/workflows/cf-ip-probe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: stable }
+      - name: Version
+        id: v
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/cf-ip-probe-v* ]]; then
+            echo "version=${GITHUB_REF#refs/tags/cf-ip-probe-v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=dev-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Test
+        working-directory: examples/cf-ip-probe
+        run: go vet ./... && go test -race ./...
+      - name: Installer syntax
+        run: sh -n examples/cf-ip-probe/scripts/install.sh && (command -v shellcheck >/dev/null && shellcheck -s sh examples/cf-ip-probe/scripts/install.sh || true)
+      - name: Build
+        run: examples/cf-ip-probe/scripts/build.sh "${{ steps.v.outputs.version }}" dist
+      - name: Smoke test
+        run: |
+          tar -xzf dist/cf-ip-probe-linux-amd64.tar.gz -C /tmp cf-ip-probe
+          /tmp/cf-ip-probe -version | grep -F "${{ steps.v.outputs.version }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cf-ip-probe-${{ steps.v.outputs.version }}
+          path: dist/
+          retention-days: 14
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/cf-ip-probe-v') && github.repository_owner == 'cuijianzhuang'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          notes="cf-ip-probe ${TAG#cf-ip-probe-v}：CDN 优选 IP 测速点。
+
+          一键安装（Linux，含 OpenWrt / Alpine）：
+
+          \`\`\`sh
+          curl -fsSL https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/install.sh | sh
+          \`\`\`
+
+          说明见 examples/cf-ip-probe/README.md。"
+          gh release create "$TAG" dist/* -R "$GITHUB_REPOSITORY" --title "cf-ip-probe ${TAG#cf-ip-probe-v}" --notes "$notes"

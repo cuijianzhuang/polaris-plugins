@@ -1,9 +1,11 @@
 // cf-ip-probe is a speed-test point for Polaris CDN profiles.
 //
 // Run it on a machine where your users are (a home router, a Raspberry Pi,
-// a domestic VPS; ideally one per carrier). Every round it samples IPs from
-// Cloudflare's ranges, measures TCP latency and loss from here, checks the
-// best ones really serve HTTPS, and reports the top N to the panel:
+// a domestic VPS; ideally one per carrier). Every round it tests one IP in
+// each Cloudflare /24 for TCP latency and loss, checks the best ones really
+// serve HTTPS (and which data centre answers), download-tests the first
+// few, and reports the top N to the panel. It can also report a
+// CloudflareSpeedTest result.csv instead of testing (-csv).
 //
 //	POST {api}/cdn-profiles/{profile}/preferred-ips   (token scope cdn:ips:write)
 //
@@ -23,6 +25,7 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -30,12 +33,16 @@ import (
 	"time"
 )
 
+// version is set at build time (-ldflags "-X main.version=…").
+var version = "dev"
+
 type config struct {
-	API, Token, Source, Host, RangesURL string
-	Profiles                            []string
-	Port, Sample, Tries, Workers, Top   int
-	Timeout, Interval                   time.Duration
-	Verify, Once, DryRun                bool
+	API, Token, Source, Host, RangesURL, RangesFile, URL, CSV, Colos string
+	Profiles                                                         []string
+	Port, Sample, Tries, Workers, Top, DownloadN                     int
+	Timeout, Interval, DownloadFor                                   time.Duration
+	MaxLatency, MinLatency, MaxLoss, MinSpeed                        float64
+	Verify, NoDownload, Once, DryRun, Version                        bool
 }
 
 func envOr(k, d string) string {
@@ -53,25 +60,43 @@ func parseFlags(args []string) (config, error) {
 	fs.StringVar(&c.Token, "token", envOr("POLARIS_TOKEN", ""), "API token with scope cdn:ips:write (env POLARIS_TOKEN)")
 	fs.StringVar(&profiles, "profile", envOr("POLARIS_CDN_PROFILE", ""), "CDN profile id(s), comma separated (env POLARIS_CDN_PROFILE)")
 	fs.StringVar(&c.Source, "source", envOr("PROBE_SOURCE", ""), "name of this speed-test point, e.g. 上海电信 (env PROBE_SOURCE)")
-	fs.StringVar(&c.Host, "host", envOr("PROBE_HOST", "www.cloudflare.com"), "a site on Cloudflare used to check that an IP serves HTTPS; your CDN domain works best")
+	fs.StringVar(&c.Host, "host", envOr("PROBE_HOST", "www.cloudflare.com"), "a site on Cloudflare used to check that an IP serves HTTPS; your CDN domain works best (env PROBE_HOST)")
 	fs.StringVar(&c.RangesURL, "ranges-url", "", "fetch IPv4 ranges from this URL (e.g. https://www.cloudflare.com/ips-v4) instead of the built-in list")
-	fs.IntVar(&c.Port, "port", 443, "port to test")
-	fs.IntVar(&c.Sample, "sample", 600, "IPs to sample per round")
+	fs.StringVar(&c.RangesFile, "f", "", "read IPv4 ranges from this file (one CIDR or IP per line), like CloudflareSpeedTest's ip.txt")
+	fs.IntVar(&c.Port, "port", 443, "port to test (latency, HTTPS check and download)")
+	fs.IntVar(&c.Sample, "sample", 0, "/24 blocks to test per round, one random IP each; 0 = every block")
 	fs.IntVar(&c.Tries, "tries", 4, "TCP connects per IP")
-	fs.IntVar(&c.Workers, "workers", 64, "concurrent tests")
+	fs.IntVar(&c.Workers, "workers", 200, "concurrent latency tests (lower it on a router)")
 	fs.IntVar(&c.Top, "top", 10, "IPs to report")
 	fs.DurationVar(&c.Timeout, "timeout", time.Second, "per-connect timeout")
+	fs.Float64Var(&c.MaxLatency, "tl", 9999, "drop IPs with average latency above this (ms)")
+	fs.Float64Var(&c.MinLatency, "tll", 0, "drop IPs with average latency below this (ms)")
+	fs.Float64Var(&c.MaxLoss, "tlr", 1, "drop IPs with loss above this (0–1; 0 = no loss allowed)")
+	fs.StringVar(&c.Colos, "colo", "", "keep only these data centres, e.g. HKG,NRT,LAX")
+	fs.BoolVar(&c.NoDownload, "dd", false, "skip the download test (rank by latency only)")
+	fs.IntVar(&c.DownloadN, "dn", 5, "IPs to download-test, best first")
+	fs.DurationVar(&c.DownloadFor, "dt", 5*time.Second, "download test length per IP")
+	fs.Float64Var(&c.MinSpeed, "sl", 0, "drop IPs slower than this (MB/s); when set, only download-tested IPs are reported")
+	fs.StringVar(&c.URL, "url", envOr("PROBE_URL", "https://speed.cloudflare.com/__down?bytes=200000000"), "download test file; a large file on your own Cloudflare site is most reliable (env PROBE_URL)")
+	fs.StringVar(&c.CSV, "csv", "", "report a CloudflareSpeedTest result.csv instead of testing (re-read every round)")
 	fs.DurationVar(&c.Interval, "interval", time.Hour, "time between rounds")
-	fs.BoolVar(&c.Verify, "verify", true, "check the best IPs serve HTTPS through /cdn-cgi/trace")
+	fs.BoolVar(&c.Verify, "verify", true, "check each IP serves HTTPS through /cdn-cgi/trace (gives the data centre)")
 	fs.BoolVar(&c.Once, "once", false, "run one round and exit")
 	fs.BoolVar(&c.DryRun, "dry-run", false, "print the result instead of reporting it")
+	fs.BoolVar(&c.Version, "version", false, "print the version and exit")
 	if err := fs.Parse(args); err != nil {
 		return c, err
+	}
+	if c.Version {
+		return c, nil
 	}
 	for _, p := range strings.Split(profiles, ",") {
 		if p = strings.TrimSpace(p); p != "" {
 			c.Profiles = append(c.Profiles, p)
 		}
+	}
+	if c.NoDownload {
+		c.DownloadN = 0
 	}
 	switch {
 	case c.Source == "":
@@ -80,8 +105,27 @@ func parseFlags(args []string) (config, error) {
 	case c.API == "" || c.Token == "" || len(c.Profiles) == 0:
 		return c, errors.New("-api, -token and -profile are required (or use -dry-run)")
 	}
-	if c.Tries < 1 || c.Top < 1 || c.Top > 200 || c.Sample < c.Top || c.Workers < 1 {
-		return c, errors.New("need tries >= 1, 1 <= top <= 200, sample >= top, workers >= 1")
+	if c.Tries < 1 || c.Top < 1 || c.Top > 200 || c.Workers < 1 || c.Workers > 1000 || c.Sample < 0 || c.DownloadN < 0 {
+		return c, errors.New("need tries >= 1, 1 <= top <= 200, 1 <= workers <= 1000, sample >= 0, dn >= 0")
+	}
+	if c.MaxLoss < 0 || c.MaxLoss > 1 || c.MinLatency > c.MaxLatency || c.MinSpeed < 0 {
+		return c, errors.New("need 0 <= tlr <= 1, tll <= tl, sl >= 0")
+	}
+	if c.CSV == "" {
+		if c.Colos != "" && !c.Verify && c.DownloadN == 0 {
+			return c, errors.New("-colo needs the HTTPS check (-verify) or the download test to learn each IP's data centre")
+		}
+		if c.MinSpeed > 0 && c.DownloadN == 0 {
+			return c, errors.New("-sl needs the download test (drop -dd or raise -dn)")
+		}
+		if c.DownloadN > 0 {
+			if u, err := url.Parse(c.URL); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Hostname() == "" {
+				return c, fmt.Errorf("-url %q is not an http(s) URL", c.URL)
+			}
+			if c.DownloadFor < time.Second {
+				return c, errors.New("-dt must be at least 1s")
+			}
+		}
 	}
 	if c.Interval < 10*time.Minute && !c.Once {
 		return c, errors.New("-interval must be at least 10m")
@@ -89,7 +133,18 @@ func parseFlags(args []string) (config, error) {
 	return c, nil
 }
 
+func (c config) filter() filter {
+	return filter{MaxLatency: c.MaxLatency, MinLatency: c.MinLatency, MaxLoss: c.MaxLoss, MinSpeed: c.MinSpeed, Colos: parseColos(c.Colos)}
+}
+
 func ranges(ctx context.Context, c config) ([]netip.Prefix, error) {
+	if c.RangesFile != "" {
+		b, err := os.ReadFile(c.RangesFile)
+		if err != nil {
+			return nil, err
+		}
+		return parseRanges(string(b))
+	}
 	if c.RangesURL == "" {
 		return parseRanges(strings.Join(cloudflareV4, "\n"))
 	}
@@ -111,18 +166,36 @@ func ranges(ctx context.Context, c config) ([]netip.Prefix, error) {
 
 // round measures once and returns the IPs to report, best first.
 func round(ctx context.Context, c config, rng *rand.Rand) ([]Result, error) {
+	f := c.filter()
+	if c.CSV != "" {
+		rs, err := readCSV(c.CSV)
+		if err != nil {
+			return nil, err
+		}
+		out := fromCSV(rs, f, c.Top)
+		log.Printf("read %d results from %s, %d pass the limits", len(rs), c.CSV, len(out))
+		return out, nil
+	}
 	rs, err := ranges(ctx, c)
 	if err != nil {
 		return nil, err
 	}
 	ips := sample(rs, c.Sample, rng)
 	tested := testAll(ctx, ips, c.Port, c.Tries, c.Workers, c.Timeout)
-	log.Printf("tested %d IPs, %d answered", len(ips), len(tested))
-	if !c.Verify {
-		return tested[:min(c.Top, len(tested))], nil
+	var cands []Result
+	for _, r := range tested {
+		if f.latencyOK(r) {
+			cands = append(cands, r)
+		}
 	}
-	// Check the best candidates in order until enough pass.
-	return verifyTop(ctx, tested[:min(len(tested), c.Top*4)], c.Top, c.Host, c.Port, 2*c.Timeout), nil
+	log.Printf("tested %d IPs, %d answered, %d within the latency/loss limits", len(ips), len(tested), len(cands))
+	p := &picker{Top: c.Top, Host: c.Host, URL: c.URL, Port: c.Port, Verify: c.Verify, DownloadN: c.DownloadN,
+		DownloadFor: c.DownloadFor, Timeout: 2 * c.Timeout, Filter: f}
+	out := p.pick(ctx, cands)
+	if p.attempted > 0 {
+		log.Printf("checked %d candidates, download-tested %d", p.checked, p.attempted)
+	}
+	return out, nil
 }
 
 // report sends the result to one profile.
@@ -147,7 +220,23 @@ func report(ctx context.Context, c config, profile string, rs []Result) error {
 	return nil
 }
 
+// csvSeen is the result.csv modification time last reported, so an old
+// file is not reported again as if it were fresh.
+var csvSeen time.Time
+
 func runOnce(ctx context.Context, c config, rng *rand.Rand) {
+	var mod time.Time
+	if c.CSV != "" {
+		st, err := os.Stat(c.CSV)
+		if err != nil {
+			log.Printf("round failed: %v", err)
+			return
+		}
+		if mod = st.ModTime(); !csvSeen.IsZero() && !mod.After(csvSeen) {
+			log.Printf("%s has not changed since the last report; skipping", c.CSV)
+			return
+		}
+	}
 	rs, err := round(ctx, c, rng)
 	if err != nil {
 		log.Printf("round failed: %v", err)
@@ -158,17 +247,26 @@ func runOnce(ctx context.Context, c config, rng *rand.Rand) {
 		return
 	}
 	for _, r := range rs {
-		log.Printf("  %-15s %6.1f ms  loss %3.0f%%  %s", r.IP, r.LatencyMs, r.Loss*100, r.Colo)
+		speed := "      -"
+		if r.Speed > 0 {
+			speed = fmt.Sprintf("%5.1f MB/s", r.Speed)
+		}
+		log.Printf("  %-15s %6.1f ms  loss %3.0f%%  %s  %s", r.IP, r.LatencyMs, r.Loss*100, speed, r.Colo)
 	}
 	if c.DryRun {
 		return
 	}
+	ok := false
 	for _, p := range c.Profiles {
 		if err := report(ctx, c, p, rs); err != nil {
 			log.Printf("report to profile %s: %v", p, err)
 		} else {
+			ok = true
 			log.Printf("reported %d IPs to profile %s", len(rs), p)
 		}
+	}
+	if ok && c.CSV != "" {
+		csvSeen = mod
 	}
 }
 
@@ -179,6 +277,10 @@ func main() {
 			fmt.Fprintln(os.Stderr, err)
 		}
 		os.Exit(2)
+	}
+	if c.Version {
+		fmt.Println("cf-ip-probe", version)
+		return
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
