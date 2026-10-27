@@ -85,7 +85,7 @@ stop_service() {
 if [ "$UNINSTALL" = 1 ]; then
   stop_service
   rm -f "$BIN" "$ENVFILE" /etc/systemd/system/$NAME.service /etc/init.d/$NAME
-  [ "$INIT" = systemd ] && systemctl daemon-reload || true
+  if [ "$INIT" = systemd ]; then systemctl daemon-reload || true; fi
   say "已卸载 $NAME。面板里的测速点记录可在 CDN 配置档的「测速点」卡片里移除。"
   exit 0
 fi
@@ -138,7 +138,7 @@ fetch "$MIRROR$BASE/$PKG" "$TMP/$PKG" || die "下载失败；github.com 访问�
 if fetch "$MIRROR$BASE/sha256sums.txt" "$TMP/sha256sums.txt" 2>/dev/null && command -v sha256sum >/dev/null 2>&1; then
   want=$(grep " $PKG\$" "$TMP/sha256sums.txt" | cut -d' ' -f1)
   got=$(sha256sum "$TMP/$PKG" | cut -d' ' -f1)
-  [ -n "$want" ] && [ "$want" = "$got" ] || die "$PKG 校验失败（sha256 不一致），已停止安装"
+  if [ -z "$want" ] || [ "$want" != "$got" ]; then die "$PKG 校验失败（sha256 不一致），已停止安装"; fi
   say "sha256 校验通过"
 else
   say "提示：没能校验 sha256（缺少 sha256sums.txt 或 sha256sum 命令）"

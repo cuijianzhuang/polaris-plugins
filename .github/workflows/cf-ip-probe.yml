@@ -1,41 +1,81 @@
 name: cf-ip-probe
-# Builds cf-ip-probe for every platform on pull requests that touch it
-# (archives attached to the run), and publishes a GitHub release when a tag
-# cf-ip-probe-vX.Y.Z is pushed. The installer
+# Pull requests that touch cf-ip-probe: test and build every platform
+# (archives attached to the run).
+# Every merge to main that touches it: the next version is computed from the
+# last cf-ip-probe-vX.Y.Z tag (patch + 1; the first release is 0.2.0), then
+# it is tagged, built and published as a GitHub release. The installer
 # (examples/cf-ip-probe/scripts/install.sh) downloads from those releases.
+# "Run workflow" by hand can bump minor or major instead.
 # Releases are cut only from the cuijianzhuang copy.
 on:
   push:
-    tags: ['cf-ip-probe-v*']
+    branches: [main]
+    paths:
+      - 'examples/cf-ip-probe/**'
+      - '.github/workflows/cf-ip-probe.yml'
   pull_request:
     paths:
       - 'examples/cf-ip-probe/**'
       - '.github/workflows/cf-ip-probe.yml'
   workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version part to increase'
+        type: choice
+        options: [patch, minor, major]
+        default: patch
 
 permissions:
   contents: read
 
+# One release at a time, so two quick merges never compute the same version.
+concurrency:
+  group: cf-ip-probe-${{ github.event_name == 'pull_request' && github.ref || 'release' }}
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      release: ${{ steps.v.outputs.release }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v5
         with: { go-version: stable }
       - name: Version
         id: v
+        env:
+          BUMP: ${{ inputs.bump || 'patch' }}
+          OWNER: ${{ github.repository_owner }}
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/cf-ip-probe-v* ]]; then
-            echo "version=${GITHUB_REF#refs/tags/cf-ip-probe-v}" >> "$GITHUB_OUTPUT"
-          else
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] || [ "$OWNER" != cuijianzhuang ] || [ "$GITHUB_REF" != refs/heads/main ]; then
             echo "version=dev-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          last=$(git tag -l 'cf-ip-probe-v*' --sort=-v:refname | head -n 1)
+          if [ -z "$last" ]; then
+            next=0.2.0
+          else
+            IFS=. read -r major minor patch <<<"${last#cf-ip-probe-v}"
+            case $BUMP in
+              major) next=$((major + 1)).0.0 ;;
+              minor) next=$major.$((minor + 1)).0 ;;
+              *) next=$major.$minor.$((patch + 1)) ;;
+            esac
+          fi
+          echo "last release: ${last:-none}; next: $next"
+          echo "version=$next" >> "$GITHUB_OUTPUT"
+          echo "release=true" >> "$GITHUB_OUTPUT"
       - name: Test
         working-directory: examples/cf-ip-probe
         run: go vet ./... && go test -race ./...
       - name: Installer syntax
-        run: sh -n examples/cf-ip-probe/scripts/install.sh && (command -v shellcheck >/dev/null && shellcheck -s sh examples/cf-ip-probe/scripts/install.sh || true)
+        run: sh -n examples/cf-ip-probe/scripts/install.sh && shellcheck -s sh examples/cf-ip-probe/scripts/install.sh
       - name: Build
         run: examples/cf-ip-probe/scripts/build.sh "${{ steps.v.outputs.version }}" dist
       - name: Smoke test
@@ -50,27 +90,31 @@ jobs:
 
   release:
     needs: build
-    if: startsWith(github.ref, 'refs/tags/cf-ip-probe-v') && github.repository_owner == 'cuijianzhuang'
+    if: needs.build.outputs.release == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
+          name: cf-ip-probe-${{ needs.build.outputs.version }}
           path: dist
-          merge-multiple: true
-      - name: Publish
+      - name: Tag and publish
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+          TAG: cf-ip-probe-v${{ needs.build.outputs.version }}
+          VERSION: ${{ needs.build.outputs.version }}
         run: |
-          notes="cf-ip-probe ${TAG#cf-ip-probe-v}：CDN 优选 IP 测速点。
+          set -euo pipefail
+          notes="cf-ip-probe $VERSION：CDN 优选 IP 测速点（提交 ${GITHUB_SHA::7}）。
 
           一键安装（Linux，含 OpenWrt / Alpine）：
 
           \`\`\`sh
-          curl -fsSL https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/install.sh | sh
+          curl -fsSL https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/install.sh | sudo sh -s -- --api … --token … --profile … --source … --host …
           \`\`\`
 
           说明见 examples/cf-ip-probe/README.md。"
-          gh release create "$TAG" dist/* -R "$GITHUB_REPOSITORY" --title "cf-ip-probe ${TAG#cf-ip-probe-v}" --notes "$notes"
+          # Creates the tag on this commit together with the release.
+          gh release create "$TAG" dist/* -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "cf-ip-probe $VERSION" --notes "$notes" --latest
