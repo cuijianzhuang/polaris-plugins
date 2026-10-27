@@ -46,6 +46,7 @@ SDK 尚未发布到包仓库，请直接拷贝文件或用 git 依赖。
 - [`examples/external-notify`](examples/external-notify)：通知类插件的清单写法。
 - [`examples/sub-format`](examples/sub-format)：Python，自定义订阅格式（CSV）+ 改写节点（国旗、排序、过滤）。
 - [`examples/tcp-ping`](examples/tcp-ping)：Go，定时探测节点 TCP 延迟并上报为外部指标。
+- [`examples/cf-ip-probe`](examples/cf-ip-probe)：Go，放在用户所在地区的 CDN 优选 IP 测速点，测完把最优 IP 上报给面板。
 - 计划中：`webhook-discord`、`epay`（Go）。
 
 ## 插件索引

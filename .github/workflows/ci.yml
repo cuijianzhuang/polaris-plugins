@@ -21,6 +21,7 @@ jobs:
       - name: Examples build
         run: |
           cd examples/tcp-ping && go vet ./... && go build ./... && cd ../..
+          cd examples/cf-ip-probe && go vet ./... && go test ./... && cd ../..
           python3 -m py_compile examples/sub-format/server.py
       - name: Example manifests match the schema
         run: |
