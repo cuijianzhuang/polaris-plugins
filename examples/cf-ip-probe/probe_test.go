@@ -114,6 +114,45 @@ func TestPicker(t *testing.T) {
 	}
 }
 
+// A download test that cannot reach its file must not drop IPs that passed
+// the HTTPS check: they are reported without a speed, the test is given up
+// after three failures, and the summary names the reason.
+func TestPickerDownloadUnreachable(t *testing.T) {
+	var cands []Result
+	for i := 1; i <= 8; i++ {
+		cands = append(cands, Result{IP: fmt.Sprintf("104.16.0.%d", i), LatencyMs: float64(i)})
+	}
+	attempts := 0
+	newPicker := func(f filter) *picker {
+		attempts = 0
+		return &picker{Top: 5, Verify: true, DownloadN: 5, Filter: f,
+			verify: func(_ context.Context, ip, _ string, _ int, _ time.Duration) (string, error) {
+				if ip == "104.16.0.2" {
+					return "", fmt.Errorf("dial tcp %s:443: i/o timeout", ip)
+				}
+				return "HKG", nil
+			},
+			download: func(_ context.Context, ip string, _ int, _ string, _, _ time.Duration) (float64, string, error) {
+				attempts++
+				return 0, "", fmt.Errorf("download: status 403 Forbidden")
+			}}
+	}
+	p := newPicker(filter{})
+	got := p.pick(context.Background(), cands)
+	if len(got) != 5 || got[0].IP != "104.16.0.1" || got[0].Speed != 0 || attempts != 3 {
+		t.Fatalf("got %+v after %d download attempts", got, attempts)
+	}
+	sum := p.summary()
+	if !strings.Contains(sum, "HTTPS check: 5 of 6 passed") || !strings.Contains(sum, "dial tcp <ip>: i/o timeout (×1)") ||
+		!strings.Contains(sum, "download test: 0 of 3 succeeded, most common failure: download: status 403 Forbidden (×3)") {
+		t.Fatalf("summary = %q", sum)
+	}
+	// With a speed floor nothing untested may be reported.
+	if got := newPicker(filter{MinSpeed: 1}).pick(context.Background(), cands); len(got) != 0 {
+		t.Fatalf("-sl reported untested IPs: %+v", got)
+	}
+}
+
 func TestDownload(t *testing.T) {
 	big := strings.Repeat("x", 1<<20)
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

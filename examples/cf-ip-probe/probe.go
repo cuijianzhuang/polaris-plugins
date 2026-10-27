@@ -9,12 +9,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math/rand/v2"
 	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
 	"os"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -303,24 +305,61 @@ func download(ctx context.Context, ip string, port int, rawURL string, limit, ti
 
 // picker turns ranked TCP results into the IPs to report.
 type picker struct {
-	Top                int
-	Host, URL          string
-	Port               int
-	Verify             bool
-	DownloadN          int // IPs to download-test; 0 = none
-	DownloadFor        time.Duration
-	Timeout            time.Duration
-	Filter             filter
-	verify             func(ctx context.Context, ip, host string, port int, timeout time.Duration) (string, error)
-	download           func(ctx context.Context, ip string, port int, rawURL string, limit, timeout time.Duration) (float64, string, error)
-	checked, attempted int
+	Top         int
+	Host, URL   string
+	Port        int
+	Verify      bool
+	DownloadN   int // IPs to download-test; 0 = none
+	DownloadFor time.Duration
+	Timeout     time.Duration
+	Filter      filter
+	Debug       bool
+	verify      func(ctx context.Context, ip, host string, port int, timeout time.Duration) (string, error)
+	download    func(ctx context.Context, ip string, port int, rawURL string, limit, timeout time.Duration) (float64, string, error)
+
+	// What happened, for the round summary.
+	checked, verified, attempted, downloaded int
+	verifyErrs, downloadErrs                 errCount
 }
+
+// errCount groups failure reasons with the addresses taken out, so the
+// summary can name the most common one.
+type errCount map[string]int
+
+var addrRe = regexp.MustCompile(`\d{1,3}(\.\d{1,3}){3}(:\d+)?`)
+
+func (e *errCount) add(err error) {
+	if *e == nil {
+		*e = errCount{}
+	}
+	(*e)[addrRe.ReplaceAllString(err.Error(), "<ip>")]++
+}
+
+func (e errCount) top() string {
+	best, n := "", 0
+	for k, v := range e {
+		if v > n || (v == n && k < best) {
+			best, n = k, v
+		}
+	}
+	if n == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s (×%d)", best, n)
+}
+
+// verifyWorkers checks candidates in parallel; the order of the result
+// still follows the ranking.
+const verifyWorkers = 16
 
 // pick walks the candidates best first: HTTPS check (-verify), data centre
 // (-colo), then a download test for the first DownloadN that pass (-sl
-// drops slow ones and the next candidate is tried). With -sl set only
-// download-tested IPs are reported; otherwise the remaining slots are
-// filled with checked IPs that were not download-tested.
+// drops slow ones and the next candidate is tried). An IP whose download
+// test fails is still reported without a speed, unless -sl is set; after
+// three failures in a row with no success the download test is given up for
+// the round, since the test file (-url) is most likely unreachable. With -sl
+// set only download-tested IPs are reported; otherwise the remaining slots
+// are filled with checked IPs that were not download-tested.
 func (p *picker) pick(ctx context.Context, cands []Result) []Result {
 	if p.verify == nil {
 		p.verify = verify
@@ -328,37 +367,91 @@ func (p *picker) pick(ctx context.Context, cands []Result) []Result {
 	if p.download == nil {
 		p.download = download
 	}
+	window := cands[:min(len(cands), p.Top*50)]
+	type checkRes struct {
+		colo string
+		err  error
+	}
+	checks := make([]checkRes, len(window))
+	if p.Verify {
+		// Check ahead in parallel, a batch at a time, stopping once enough
+		// candidates passed.
+		for start := 0; start < len(window) && ctx.Err() == nil; start += verifyWorkers * 4 {
+			end := min(len(window), start+verifyWorkers*4)
+			var wg sync.WaitGroup
+			sem := make(chan struct{}, verifyWorkers)
+			for i := start; i < end; i++ {
+				wg.Add(1)
+				go func(i int) {
+					defer wg.Done()
+					sem <- struct{}{}
+					defer func() { <-sem }()
+					colo, err := p.verify(ctx, window[i].IP, p.Host, p.Port, p.Timeout)
+					checks[i] = checkRes{colo, err}
+				}(i)
+			}
+			wg.Wait()
+			ok := 0
+			for i := 0; i < end; i++ {
+				if checks[i].err == nil && p.Filter.coloOK(checks[i].colo) {
+					ok++
+				}
+			}
+			if ok >= p.Top*3 {
+				window = window[:end]
+				break
+			}
+		}
+	}
 	var out []Result
-	tested := 0
-	for _, r := range cands {
-		if len(out) >= p.Top || p.checked >= p.Top*20 || ctx.Err() != nil {
+	tested, failsInRow := 0, 0
+	downloads := p.DownloadN > 0
+	for i, r := range window {
+		if len(out) >= p.Top || ctx.Err() != nil {
 			break
 		}
 		p.checked++
 		if p.Verify {
-			colo, err := p.verify(ctx, r.IP, p.Host, p.Port, p.Timeout)
-			if err != nil {
+			if checks[i].err != nil {
+				p.verifyErrs.add(checks[i].err)
+				if p.Debug {
+					log.Printf("  check %s: %v", r.IP, checks[i].err)
+				}
 				continue
 			}
-			r.Colo = colo
-			if !p.Filter.coloOK(colo) {
+			p.verified++
+			r.Colo = checks[i].colo
+			if !p.Filter.coloOK(r.Colo) {
 				continue
 			}
 		}
-		if tested < p.DownloadN && p.attempted < p.DownloadN*3 {
+		if downloads && tested < p.DownloadN && p.attempted < p.DownloadN*3 {
 			p.attempted++
 			speed, colo, err := p.download(ctx, r.IP, p.Port, p.URL, p.DownloadFor, p.Timeout)
 			if err != nil {
-				continue
+				p.downloadErrs.add(err)
+				if p.Debug {
+					log.Printf("  download via %s: %v", r.IP, err)
+				}
+				if failsInRow++; failsInRow >= 3 && tested == 0 {
+					log.Printf("download test keeps failing (%v); reporting without speeds this round — check -url, or turn it off with -dd", err)
+					downloads = false
+				}
+				if p.Filter.MinSpeed > 0 {
+					continue
+				}
+			} else {
+				failsInRow = 0
+				if r.Colo == "" {
+					r.Colo = colo
+				}
+				if speed < p.Filter.MinSpeed || !p.Filter.coloOK(r.Colo) {
+					continue
+				}
+				r.Speed = speed
+				tested++
+				p.downloaded++
 			}
-			if r.Colo == "" {
-				r.Colo = colo
-			}
-			if speed < p.Filter.MinSpeed || !p.Filter.coloOK(r.Colo) {
-				continue
-			}
-			r.Speed = speed
-			tested++
 		} else if p.Filter.MinSpeed > 0 || !p.Filter.coloOK(r.Colo) {
 			continue
 		}
@@ -366,6 +459,27 @@ func (p *picker) pick(ctx context.Context, cands []Result) []Result {
 	}
 	rank(out)
 	return out
+}
+
+// summary is one log line on what the checks found.
+func (p *picker) summary() string {
+	var b strings.Builder
+	if p.Verify {
+		fmt.Fprintf(&b, "HTTPS check: %d of %d passed", p.verified, p.checked)
+		if t := p.verifyErrs.top(); t != "" {
+			fmt.Fprintf(&b, ", most common failure: %s", t)
+		}
+	}
+	if p.attempted > 0 {
+		if b.Len() > 0 {
+			b.WriteString("; ")
+		}
+		fmt.Fprintf(&b, "download test: %d of %d succeeded", p.downloaded, p.attempted)
+		if t := p.downloadErrs.top(); t != "" {
+			fmt.Fprintf(&b, ", most common failure: %s", t)
+		}
+	}
+	return b.String()
 }
 
 // readCSV reads a CloudflareSpeedTest result.csv: IP, sent, received,
