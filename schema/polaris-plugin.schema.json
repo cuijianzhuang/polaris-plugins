@@ -52,7 +52,8 @@
           "nodes:read",
           "nodes:metrics:write",
           "traffic:read",
-          "settings:read"
+          "settings:read",
+          "cdn:ips:write"
         ]
       }
     },

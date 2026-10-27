@@ -13,6 +13,7 @@
 | `users:plan` | `GET /plans`、`POST /users/:id/plan`（开通 / 续订套餐）、`GET /traffic-packs`、`POST /users/:id/pack`（加购流量包） |
 | `subs:read` | `GET /users/:id/links`、`/users/:id/sub-check`（含代理链接和凭据，**敏感**） |
 | `nodes:read` | `GET /nodes`、`/nodes/:id`、`/inbounds`、`/nodes/:id/metrics/external` |
+| `cdn:ips:write` | `POST /cdn-profiles/:id/preferred-ips`：测速点上报 CDN 优选 IP，不能读取或修改配置档（面板 ≥ 0.1.164） |
 | `nodes:metrics:write` | `POST /nodes/:id/metrics`：只写带来源的[外部指标](subscription.md#上报节点外部指标)，不能读或改节点（面板 ≥ 0.1.149） |
 | `traffic:read` | `GET /stats/overview`、`/stats/traffic`、`/stats/nodes`、`/stats/tags` |
 | `settings:read` | `GET /settings` |
