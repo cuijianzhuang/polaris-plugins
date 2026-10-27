@@ -87,6 +87,8 @@ go build -o cf-ip-probe .
 ./cf-ip-probe -source 上海电信 -dry-run -once          # 先试一轮，只打印结果
 ```
 
-`scripts/build.sh <版本> <目录>` 交叉编译全部平台并打包。推送标签 `cf-ip-probe-vX.Y.Z` 后，GitHub Actions 会自动编译并发布 Release（含安装脚本和 sha256sums.txt）。
+`scripts/build.sh <版本> <目录>` 交叉编译全部平台并打包。
+
+**自动发布**：每次有 cf-ip-probe 的改动合并进 main，GitHub Actions 会在上一个版本号的基础上把补丁位加 1（例如 0.2.0 → 0.2.1），打标签 `cf-ip-probe-vX.Y.Z`，编译全部平台并发布 Release（含安装脚本和 sha256sums.txt）。要升次版本号或主版本号，在 Actions 里手动运行 cf-ip-probe 流水线并选择 minor / major。
 
 面板侧：配置档详情的「测速点」卡片显示每个测速点的上报时间、最优 IP、机房和速度；超过设定时长没有上报会发通知。说明见 Polaris 用户手册「CDN 优选 IP」一节。
