@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/cuijianzhuang/polaris-plugins/schema/registry.schema.json",
+  "title": "Polaris plugin registry",
+  "type": "object",
+  "required": ["version", "plugins"],
+  "properties": {
+    "version": { "const": 1 },
+    "plugins": {
+      "type": "array",
+      "maxItems": 500,
+      "items": { "$ref": "#/$defs/entry" }
+    }
+  },
+  "$defs": {
+    "url": { "type": "string", "pattern": "^https://[^\\s]+$", "maxLength": 500 },
+    "entry": {
+      "type": "object",
+      "required": ["id", "name", "description", "author", "repo", "type", "kind", "category"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,40}$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "description": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "author": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "repo": { "$ref": "#/$defs/url" },
+        "homepage": { "$ref": "#/$defs/url" },
+        "language": { "type": "string", "maxLength": 30 },
+        "type": { "enum": ["plugin", "tool"] },
+        "kind": { "enum": ["official", "example", "community"] },
+        "category": { "enum": ["notify", "billing", "subscription", "monitor", "cdn", "users", "other"] },
+        "scopes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "enum": ["users:read", "users:write", "users:renew", "users:traffic:add", "users:plan", "subs:read", "nodes:read", "nodes:metrics:write", "traffic:read", "settings:read", "cdn:ips:write", "metrics:read"] }
+        },
+        "events": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z]+\\.[a-z_]+$" } },
+        "minPanel": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+([-+][0-9A-Za-z.+-]+)?$" },
+        "deploy": {
+          "type": "object",
+          "properties": {
+            "command": { "type": "string", "maxLength": 600 },
+            "docker": { "type": "string", "maxLength": 200 },
+            "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

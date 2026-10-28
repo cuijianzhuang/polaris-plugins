@@ -51,7 +51,7 @@ SDK 尚未发布到包仓库，请直接拷贝文件或用 git 依赖。
 
 ## 插件索引
 
-[`registry/index.json`](registry/index.json) 是社区插件目录，欢迎 PR 添加你的插件。索引只是目录，不代表官方审核。
+[`registry/index.json`](registry/index.json) 是插件目录，Polaris 面板的「扩展 → 插件市场」直接读取它，管理员可以在面板里浏览、复制部署命令并一键安装。欢迎 PR 添加你的插件，字段说明见 [registry/README.md](registry/README.md)。目录只是清单，不代表官方审核。
 
 ## 开发
 
