@@ -16,6 +16,10 @@
 #   --mirror PREFIX  GitHub download prefix for networks where github.com is slow
 #                    (PREFIX is put in front of each github.com URL; env GH_PROXY)
 #   --dir DIR        where to put the binary (default /usr/local/bin, /usr/bin on OpenWrt)
+#   --auto-update on|off  check for a new release once a day and install it
+#                    (default on; settings are kept)
+#   --update         install only when a newer release exists (used by the
+#                    daily check; never asks questions)
 #   --test           run one dry-run round before starting the service
 #   --no-start       install only
 #   --uninstall
@@ -26,7 +30,7 @@ NAME=cf-ip-probe
 ENVFILE=/etc/$NAME.env
 
 API='' TOKEN='' PROFILE='' SOURCE='' CARRIER='' HOST='' ARGS='' VERSION='' MIRROR=${GH_PROXY:-}
-DIR='' TEST=0 START=1 UNINSTALL=0
+DIR='' TEST=0 START=1 UNINSTALL=0 UPDATE=0 AUTO_UPDATE=''
 
 say() { printf '%s\n' "$*"; }
 die() { printf '错误：%s\n' "$*" >&2; exit 1; }
@@ -44,10 +48,12 @@ while [ $# -gt 0 ]; do
     --version) need_arg "$@"; VERSION=${2#v}; shift ;;
     --mirror) need_arg "$@"; MIRROR=$2; shift ;;
     --dir) need_arg "$@"; DIR=$2; shift ;;
+    --auto-update) need_arg "$@"; AUTO_UPDATE=$2; shift ;;
+    --update) UPDATE=1 ;;
     --test) TEST=1 ;;
     --no-start) START=0 ;;
     --uninstall) UNINSTALL=1 ;;
-    -h|--help) sed -n '2,21p' "$0" 2>/dev/null || true; exit 0 ;;
+    -h|--help) sed -n '2,25p' "$0" 2>/dev/null || true; exit 0 ;;
     *) die "未知参数 $1（--help 查看用法）" ;;
   esac
   shift
@@ -71,6 +77,9 @@ if [ -z "$DIR" ]; then
   if [ "$INIT" = procd ]; then DIR=/usr/bin; else DIR=/usr/local/bin; fi
 fi
 BIN=$DIR/$NAME
+UPDATER=$DIR/$NAME-update
+INSTALLER=$DIR/$NAME-install.sh
+CRONTAB=/etc/crontabs/root
 
 stop_service() {
   case $INIT in
@@ -84,13 +93,44 @@ stop_service() {
   esac
 }
 
+# Daily update check: a systemd timer, or a cron line on OpenWrt / Alpine.
+reload_cron() {
+  if [ -x /etc/init.d/cron ]; then
+    /etc/init.d/cron enable >/dev/null 2>&1 || true
+    /etc/init.d/cron restart >/dev/null 2>&1 || true
+  elif [ -x /etc/init.d/crond ]; then
+    rc-update add crond default >/dev/null 2>&1 || true
+    rc-service crond restart >/dev/null 2>&1 || true
+  fi
+}
+remove_auto_update() {
+  if [ "$INIT" = systemd ]; then
+    systemctl disable --now $NAME-update.timer >/dev/null 2>&1 || true
+    rm -f /etc/systemd/system/$NAME-update.timer /etc/systemd/system/$NAME-update.service
+  fi
+  if [ -f "$CRONTAB" ] && grep -q "$NAME-update" "$CRONTAB"; then
+    sed -i "/$NAME-update/d" "$CRONTAB"
+    reload_cron
+  fi
+}
+
 if [ "$UNINSTALL" = 1 ]; then
   stop_service
-  rm -f "$BIN" "$ENVFILE" /etc/systemd/system/$NAME.service /etc/init.d/$NAME
+  remove_auto_update
+  rm -f "$BIN" "$UPDATER" "$INSTALLER" "$ENVFILE" /etc/systemd/system/$NAME.service /etc/init.d/$NAME
   if [ "$INIT" = systemd ]; then systemctl daemon-reload || true; fi
   say "已卸载 $NAME。面板里的测速点记录可在 CDN 配置档的「测速点」卡片里移除。"
   exit 0
 fi
+
+# The daily check reuses the mirror and switch saved at install time.
+saved() { [ -f "$ENVFILE" ] && sed -n "s/^$1='\(.*\)'\$/\1/p" "$ENVFILE" | head -n 1; }
+[ -n "$MIRROR" ] || MIRROR=$(saved PROBE_MIRROR || true)
+# A pinned --version stays pinned unless --auto-update on is given.
+if [ -n "$VERSION" ] && [ "$UPDATE" = 0 ] && [ -z "$AUTO_UPDATE" ]; then AUTO_UPDATE=off; fi
+[ -n "$AUTO_UPDATE" ] || AUTO_UPDATE=$(saved PROBE_AUTO_UPDATE || true)
+[ -n "$AUTO_UPDATE" ] || AUTO_UPDATE=on
+case $AUTO_UPDATE in on|off) ;; *) die "--auto-update 只能是 on 或 off" ;; esac
 
 # --- platform --------------------------------------------------------------
 endian() { # 1 = little, 2 = big (ELF EI_DATA of /bin/sh)
@@ -132,6 +172,15 @@ else
   fi
 fi
 
+if [ "$UPDATE" = 1 ]; then
+  [ -x "$BIN" ] || die "还没有安装 $NAME，先不带 --update 运行一次"
+  [ -n "${TAG:-}" ] || [ -n "$VERSION" ] || { say "没能查到最新版本，下次再试"; exit 0; }
+  have=$("$BIN" -version 2>/dev/null | sed -n "s/^$NAME //p")
+  want=${VERSION:-${TAG#"$NAME"-v}}
+  if [ "$have" = "$want" ]; then say "已是最新版本 $have"; exit 0; fi
+  say "发现新版本：$have → $want"
+fi
+
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT INT TERM
 PKG=$NAME-linux-$ARCH.tar.gz
@@ -147,6 +196,13 @@ else
 fi
 tar -xzf "$TMP/$PKG" -C "$TMP" $NAME || die "解压失败"
 "$TMP/$NAME" -version >/dev/null 2>&1 || die "下载的程序在这台机器上不能运行（架构 $ARCH）"
+# Keep this release's installer (sha256 checked) for the daily update check.
+HAVE_INSTALLER=0
+if [ "$AUTO_UPDATE" = on ] && [ -f "$TMP/sha256sums.txt" ] && command -v sha256sum >/dev/null 2>&1 &&
+  fetch "$MIRROR$BASE/install.sh" "$TMP/install.sh" 2>/dev/null; then
+  want=$(grep " install.sh\$" "$TMP/sha256sums.txt" | cut -d' ' -f1)
+  if [ -n "$want" ] && [ "$want" = "$(sha256sum "$TMP/install.sh" | cut -d' ' -f1)" ]; then HAVE_INSTALLER=1; fi
+fi
 
 # --- settings --------------------------------------------------------------
 # Keep earlier answers on re-install.
@@ -162,7 +218,7 @@ if [ -f "$ENVFILE" ]; then
 fi
 
 TTY=0
-if [ -r /dev/tty ] && (exec </dev/tty) 2>/dev/null; then TTY=1; fi
+if [ "$UPDATE" = 0 ] && [ -r /dev/tty ] && (exec </dev/tty) 2>/dev/null; then TTY=1; fi
 ask() { # var prompt [default]
   eval "cur=\${$1}"
   [ -n "$cur" ] && return 0
@@ -182,7 +238,7 @@ ask SOURCE "测速点名称（例如 上海电信）"
 ask HOST "用来验证 IP 的域名（填你的 CDN 回源域名）" www.cloudflare.com
 
 case $CARRIER in ''|ct|cu|cm) ;; *) die "--carrier 只能是 ct（电信）、cu（联通）、cm（移动）" ;; esac
-for v in "$API" "$TOKEN" "$PROFILE" "$SOURCE" "$HOST" "$ARGS"; do
+for v in "$API" "$TOKEN" "$PROFILE" "$SOURCE" "$HOST" "$ARGS" "$MIRROR"; do
   case $v in *"'"*|*'
 '*) die "参数里不能有单引号或换行：$v" ;; esac
 done
@@ -202,10 +258,62 @@ PROBE_SOURCE='$SOURCE'
 PROBE_HOST='$HOST'
 PROBE_CARRIER='$CARRIER'
 PROBE_ARGS='$ARGS'
+PROBE_MIRROR='$MIRROR'
+PROBE_AUTO_UPDATE='$AUTO_UPDATE'
 EOF
 chmod 600 "$ENVFILE"
 umask 022
 say "已安装 $("$BIN" -version) 到 $BIN，配置在 $ENVFILE"
+
+# --- daily update check --------------------------------------------------
+remove_auto_update
+UPD=''
+if [ "$AUTO_UPDATE" = on ] && [ "$HAVE_INSTALLER" = 1 ] && [ "$INIT" != none ]; then
+  install -m 0755 "$TMP/install.sh" "$INSTALLER" 2>/dev/null || { cp "$TMP/install.sh" "$INSTALLER" && chmod 0755 "$INSTALLER"; }
+  cat > "$UPDATER" <<EOF
+#!/bin/sh
+# Installs a newer cf-ip-probe release when there is one; settings are kept.
+exec sh $INSTALLER --update --dir $DIR
+EOF
+  chmod 0755 "$UPDATER"
+  if [ "$INIT" = systemd ]; then
+    cat > /etc/systemd/system/$NAME-update.service <<EOF
+[Unit]
+Description=Update cf-ip-probe to the latest release
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=$UPDATER
+EOF
+    cat > /etc/systemd/system/$NAME-update.timer <<EOF
+[Unit]
+Description=Daily cf-ip-probe update check
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=6h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+    systemctl daemon-reload
+    systemctl enable --now $NAME-update.timer >/dev/null 2>&1 || true
+    UPD="systemctl list-timers $NAME-update.timer"
+  else
+    # A random time of day, so many probes do not all ask GitHub at once.
+    r=$(od -An -N2 -tu2 /dev/urandom | tr -d ' ')
+    mkdir -p "$(dirname "$CRONTAB")"
+    printf '%s %s * * * %s >/dev/null 2>&1\n' $((r % 60)) $((r / 60 % 24)) "$UPDATER" >> "$CRONTAB"
+    reload_cron
+    UPD="grep $NAME-update $CRONTAB"
+  fi
+else
+  rm -f "$UPDATER" "$INSTALLER"
+  if [ "$AUTO_UPDATE" = on ]; then say "提示：没能取得并校验这个版本的安装脚本，这次没有开启自动更新"; fi
+fi
 
 if [ "$TEST" = 1 ]; then
   say "试跑一轮（不上报），约 1–3 分钟…"
@@ -296,3 +404,4 @@ else
 fi
 say "查看日志：$LOGS"
 say "修改设置：编辑 $ENVFILE 后重启服务；或者带上新参数重新运行本脚本。"
+if [ -n "$UPD" ]; then say "自动更新：每天检查一次新版本（查看：$UPD；关闭：重新运行并加 --auto-update off）"; fi
