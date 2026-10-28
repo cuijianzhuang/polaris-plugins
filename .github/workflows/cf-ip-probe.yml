@@ -29,6 +29,9 @@ permissions:
   contents: read
 
 # One release at a time, so two quick merges never compute the same version.
+# Several cf-ip-probe merges in a row release only the newest: a run waits a
+# little, skips itself when a later commit on main also changes cf-ip-probe
+# (GitHub keeps only the newest queued run), and checks again before tagging.
 concurrency:
   group: cf-ip-probe-${{ github.event_name == 'pull_request' && github.ref || 'release' }}
   cancel-in-progress: false
@@ -43,6 +46,24 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Release only the newest cf-ip-probe change on main
+        id: latest
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WAIT: 60
+        run: |
+          set -euo pipefail
+          sleep "$WAIT"
+          # Stale when a later commit on main also touches cf-ip-probe: its
+          # own run (the newest one queued) releases instead.
+          files=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${GITHUB_SHA}...${GITHUB_REF_NAME}" --jq '.files[].filename')
+          if printf '%s\n' "$files" | grep -qE '^(examples/cf-ip-probe/|\.github/workflows/cf-ip-probe\.yml$)'; then
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::a newer cf-ip-probe change is on ${GITHUB_REF_NAME}; its run releases instead of ${GITHUB_SHA::7}"
+          else
+            echo "stale=false" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/setup-go@v5
         with: { go-version: stable }
       - name: Version
@@ -50,9 +71,10 @@ jobs:
         env:
           BUMP: ${{ inputs.bump || 'patch' }}
           OWNER: ${{ github.repository_owner }}
+          STALE: ${{ steps.latest.outputs.stale }}
         run: |
           set -euo pipefail
-          if [ "$GITHUB_EVENT_NAME" = pull_request ] || [ "$OWNER" != cuijianzhuang ] || [ "$GITHUB_REF" != refs/heads/main ]; then
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] || [ "$OWNER" != cuijianzhuang ] || [ "$GITHUB_REF" != refs/heads/main ] || [ "$STALE" = true ]; then
             echo "version=dev-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
             echo "release=false" >> "$GITHUB_OUTPUT"
             exit 0
@@ -99,7 +121,26 @@ jobs:
         with:
           name: cf-ip-probe-${{ needs.build.outputs.version }}
           path: dist
+      - name: Release only the newest cf-ip-probe change on main
+        id: latest
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WAIT: 0
+        run: |
+          set -euo pipefail
+          sleep "$WAIT"
+          # Stale when a later commit on main also touches cf-ip-probe: its
+          # own run (the newest one queued) releases instead.
+          files=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${GITHUB_SHA}...${GITHUB_REF_NAME}" --jq '.files[].filename')
+          if printf '%s\n' "$files" | grep -qE '^(examples/cf-ip-probe/|\.github/workflows/cf-ip-probe\.yml$)'; then
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::a newer cf-ip-probe change is on ${GITHUB_REF_NAME}; its run releases instead of ${GITHUB_SHA::7}"
+          else
+            echo "stale=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Tag and publish
+        if: steps.latest.outputs.stale != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: cf-ip-probe-v${{ needs.build.outputs.version }}
