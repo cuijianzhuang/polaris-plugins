@@ -348,6 +348,12 @@ func (e errCount) top() string {
 	return fmt.Sprintf("%s (×%d)", best, n)
 }
 
+// isTimeout reports a timed-out connection or handshake.
+func isTimeout(err error) bool {
+	var ne net.Error
+	return err != nil && errors.As(err, &ne) && ne.Timeout()
+}
+
 // verifyWorkers checks candidates in parallel; the order of the result
 // still follows the ranking.
 const verifyWorkers = 16
@@ -387,6 +393,11 @@ func (p *picker) pick(ctx context.Context, cands []Result) []Result {
 					sem <- struct{}{}
 					defer func() { <-sem }()
 					colo, err := p.verify(ctx, window[i].IP, p.Host, p.Port, p.Timeout)
+					if isTimeout(err) && ctx.Err() == nil {
+						// One more try: a lost packet on a long route is common
+						// and says little about the IP.
+						colo, err = p.verify(ctx, window[i].IP, p.Host, p.Port, p.Timeout)
+					}
 					checks[i] = checkRes{colo, err}
 				}(i)
 			}

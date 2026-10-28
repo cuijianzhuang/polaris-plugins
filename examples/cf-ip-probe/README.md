@@ -21,6 +21,7 @@ curl -fsSL https://github.com/cuijianzhuang/polaris-plugins/releases/latest/down
 
 | 脚本参数 | 说明 |
 | --- | --- |
+| `--carrier ct\|cu\|cm` | 测速点运营商，不填时面板从测速点名称识别 |
 | `--args "…"` | 额外的程序参数，例如 `--args "-interval 2h -colo HKG,NRT -sl 5"` |
 | `--test` | 安装后先试跑一轮（只打印结果，不上报） |
 | `--version 0.2.0` | 安装指定版本，默认最新 |
@@ -45,12 +46,13 @@ curl -fsSL https://github.com/cuijianzhuang/polaris-plugins/releases/latest/down
 
 ## 参数
 
-也可以用环境变量 `POLARIS_API`、`POLARIS_TOKEN`、`POLARIS_CDN_PROFILE`、`PROBE_SOURCE`、`PROBE_HOST`、`PROBE_URL`。
+也可以用环境变量 `POLARIS_API`、`POLARIS_TOKEN`、`POLARIS_CDN_PROFILE`、`PROBE_SOURCE`、`PROBE_CARRIER`、`PROBE_HOST`、`PROBE_URL`。
 
 | 参数 | 默认 | 说明 | CloudflareSpeedTest |
 | --- | --- | --- | --- |
 | `-source` | 必填 | 测速点名称，面板按它区分测速点 | |
 | `-profile` | 必填 | 配置档 ID，多个用逗号分隔 | |
+| `-carrier` | 从 `-source` 识别 | 测速点运营商：`ct` 电信、`cu` 联通、`cm` 移动；面板开启「按运营商分配」时，这个运营商的用户拿到本测速点上报的 IP | |
 | `-host` | `www.cloudflare.com` | 用来验证 IP 的站点；填你自己的 CDN 域名最准 | |
 | `-port` | 443 | 测试端口，和配置档使用的端口一致 | `-tp` |
 | `-sample` | 0 | 每轮测多少个 /24 网段，0 为全部 | `-allip` 相反 |
@@ -75,7 +77,7 @@ curl -fsSL https://github.com/cuijianzhuang/polaris-plugins/releases/latest/down
 
 每轮结束有一行汇总，例如 `HTTPS check: 12 of 200 passed, most common failure: …; download test: 0 of 3 succeeded, most common failure: …`：
 
-- **HTTPS 验证大多失败**：`-host` 要填已经开了 Cloudflare 代理（橙色云朵）的域名；超时多说明这条线路到 Cloudflare 很差，可以用 `-tl` 只留低延迟 IP，或换端口（`-port 2053` / `8443` 等，配置档也要用同一个端口）。
+- **HTTPS 验证大多失败**：超时的 IP 会自动重试一次。`-host` 要填已经开了 Cloudflare 代理（橙色云朵）的域名；超时多说明这条线路到 Cloudflare 很差，可以用 `-tl` 只留低延迟 IP，或换端口（`-port 2053` / `8443` 等，配置档也要用同一个端口）。
 - **下载测速失败**：默认测速文件在 speed.cloudflare.com，部分国内网络访问不了。换成你自己 Cloudflare 站点上的大文件（`-url https://cdn.example.com/100mb.bin`），或用 `-dd` 关掉下载测速。
 - 加 `-debug` 能看到每个 IP 的失败原因。
 

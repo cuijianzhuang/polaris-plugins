@@ -12,6 +12,7 @@ import (
 	"net/netip"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -153,6 +154,36 @@ func TestPickerDownloadUnreachable(t *testing.T) {
 	}
 }
 
+// A check that times out is tried once more before the IP is dropped.
+func TestPickerRetriesTimeout(t *testing.T) {
+	var mu sync.Mutex
+	calls := map[string]int{}
+	p := &picker{Top: 2, Verify: true,
+		verify: func(_ context.Context, ip, _ string, _ int, _ time.Duration) (string, error) {
+			mu.Lock()
+			calls[ip]++
+			n := calls[ip]
+			mu.Unlock()
+			switch {
+			case ip == "1" && n == 1:
+				return "", &net.OpError{Op: "dial", Err: timeoutErr{}}
+			case ip == "2":
+				return "", fmt.Errorf("status 403 Forbidden")
+			}
+			return "HKG", nil
+		}}
+	got := p.pick(context.Background(), []Result{{IP: "1"}, {IP: "2"}, {IP: "3"}})
+	if len(got) != 2 || got[0].IP != "1" || calls["1"] != 2 || calls["2"] != 1 {
+		t.Fatalf("got %+v, calls %v", got, calls)
+	}
+}
+
+type timeoutErr struct{}
+
+func (timeoutErr) Error() string   { return "i/o timeout" }
+func (timeoutErr) Timeout() bool   { return true }
+func (timeoutErr) Temporary() bool { return true }
+
 func TestDownload(t *testing.T) {
 	big := strings.Repeat("x", 1<<20)
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -265,8 +296,9 @@ func TestVerifyEdge(t *testing.T) {
 
 func TestReport(t *testing.T) {
 	var got struct {
-		Source string   `json:"source"`
-		IPs    []Result `json:"ips"`
+		Source  string   `json:"source"`
+		Carrier string   `json:"carrier"`
+		IPs     []Result `json:"ips"`
 	}
 	var path, auth string
 	panel := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -276,12 +308,12 @@ func TestReport(t *testing.T) {
 		w.Write([]byte(`{"stored":2}`))
 	}))
 	defer panel.Close()
-	c := config{API: panel.URL + "/admin/api/v1/", Token: "plt_x", Source: "上海电信"}
+	c := config{API: panel.URL + "/admin/api/v1/", Token: "plt_x", Source: "上海电信", Carrier: "ct"}
 	rs := []Result{{IP: "104.16.0.1", LatencyMs: 38.5}, {IP: "104.16.0.2", LatencyMs: 50, Loss: 0.25, Colo: "HKG"}}
 	if err := report(context.Background(), c, "cf1", rs); err != nil {
 		t.Fatal(err)
 	}
-	if path != "/admin/api/v1/cdn-profiles/cf1/preferred-ips" || auth != "Bearer plt_x" || got.Source != "上海电信" || len(got.IPs) != 2 || got.IPs[1].Loss != 0.25 {
+	if path != "/admin/api/v1/cdn-profiles/cf1/preferred-ips" || auth != "Bearer plt_x" || got.Source != "上海电信" || got.Carrier != "ct" || len(got.IPs) != 2 || got.IPs[1].Loss != 0.25 {
 		t.Fatalf("path=%s auth=%s body=%+v", path, auth, got)
 	}
 
@@ -313,6 +345,7 @@ func TestFlags(t *testing.T) {
 		{"-tlr", "2"},
 		{"-url", "ftp://x/y"},
 		{"-workers", "5000"},
+		{"-carrier", "att"},
 	} {
 		if _, err := parseFlags(append([]string{"-source", "x", "-dry-run", "-once"}, bad...)); err == nil {
 			t.Errorf("%v accepted", bad)

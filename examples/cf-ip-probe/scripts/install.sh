@@ -10,6 +10,7 @@
 #
 # Options:
 #   --api URL --token T --profile ID[,ID] --source NAME --host DOMAIN
+#   --carrier ct|cu|cm  this point's carrier (default: read from --source)
 #   --args "…"       extra cf-ip-probe flags, e.g. "-interval 2h -colo HKG -dd"
 #   --version X.Y.Z  install this release instead of the latest
 #   --mirror PREFIX  GitHub download prefix for networks where github.com is slow
@@ -24,7 +25,7 @@ REPO=cuijianzhuang/polaris-plugins
 NAME=cf-ip-probe
 ENVFILE=/etc/$NAME.env
 
-API='' TOKEN='' PROFILE='' SOURCE='' HOST='' ARGS='' VERSION='' MIRROR=${GH_PROXY:-}
+API='' TOKEN='' PROFILE='' SOURCE='' CARRIER='' HOST='' ARGS='' VERSION='' MIRROR=${GH_PROXY:-}
 DIR='' TEST=0 START=1 UNINSTALL=0
 
 say() { printf '%s\n' "$*"; }
@@ -38,6 +39,7 @@ while [ $# -gt 0 ]; do
     --profile) need_arg "$@"; PROFILE=$2; shift ;;
     --source) need_arg "$@"; SOURCE=$2; shift ;;
     --host) need_arg "$@"; HOST=$2; shift ;;
+    --carrier) need_arg "$@"; CARRIER=$2; shift ;;
     --args) need_arg "$@"; ARGS=$2; shift ;;
     --version) need_arg "$@"; VERSION=${2#v}; shift ;;
     --mirror) need_arg "$@"; MIRROR=$2; shift ;;
@@ -45,7 +47,7 @@ while [ $# -gt 0 ]; do
     --test) TEST=1 ;;
     --no-start) START=0 ;;
     --uninstall) UNINSTALL=1 ;;
-    -h|--help) sed -n '2,22p' "$0" 2>/dev/null || true; exit 0 ;;
+    -h|--help) sed -n '2,21p' "$0" 2>/dev/null || true; exit 0 ;;
     *) die "未知参数 $1（--help 查看用法）" ;;
   esac
   shift
@@ -155,6 +157,7 @@ if [ -f "$ENVFILE" ]; then
   [ -n "$PROFILE" ] || PROFILE=$(old POLARIS_CDN_PROFILE)
   [ -n "$SOURCE" ] || SOURCE=$(old PROBE_SOURCE)
   [ -n "$HOST" ] || HOST=$(old PROBE_HOST)
+  [ -n "$CARRIER" ] || CARRIER=$(old PROBE_CARRIER)
   [ -n "$ARGS" ] || ARGS=$(old PROBE_ARGS)
 fi
 
@@ -178,6 +181,7 @@ ask PROFILE "CDN 配置档 ID"
 ask SOURCE "测速点名称（例如 上海电信）"
 ask HOST "用来验证 IP 的域名（填你的 CDN 回源域名）" www.cloudflare.com
 
+case $CARRIER in ''|ct|cu|cm) ;; *) die "--carrier 只能是 ct（电信）、cu（联通）、cm（移动）" ;; esac
 for v in "$API" "$TOKEN" "$PROFILE" "$SOURCE" "$HOST" "$ARGS"; do
   case $v in *"'"*|*'
 '*) die "参数里不能有单引号或换行：$v" ;; esac
@@ -196,6 +200,7 @@ POLARIS_TOKEN='$TOKEN'
 POLARIS_CDN_PROFILE='$PROFILE'
 PROBE_SOURCE='$SOURCE'
 PROBE_HOST='$HOST'
+PROBE_CARRIER='$CARRIER'
 PROBE_ARGS='$ARGS'
 EOF
 chmod 600 "$ENVFILE"
@@ -242,7 +247,7 @@ start_service() {
 	. $ENVFILE
 	procd_open_instance
 	procd_set_param command $BIN \$PROBE_ARGS
-	procd_set_param env POLARIS_API="\$POLARIS_API" POLARIS_TOKEN="\$POLARIS_TOKEN" POLARIS_CDN_PROFILE="\$POLARIS_CDN_PROFILE" PROBE_SOURCE="\$PROBE_SOURCE" PROBE_HOST="\$PROBE_HOST"
+	procd_set_param env POLARIS_API="\$POLARIS_API" POLARIS_TOKEN="\$POLARIS_TOKEN" POLARIS_CDN_PROFILE="\$POLARIS_CDN_PROFILE" PROBE_SOURCE="\$PROBE_SOURCE" PROBE_HOST="\$PROBE_HOST" PROBE_CARRIER="\$PROBE_CARRIER"
 	procd_set_param respawn 3600 30 0
 	procd_set_param stdout 1
 	procd_set_param stderr 1
