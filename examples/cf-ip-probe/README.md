@@ -24,12 +24,15 @@ curl -fsSL https://github.com/cuijianzhuang/polaris-plugins/releases/latest/down
 | `--carrier ct\|cu\|cm` | 测速点运营商，不填时面板从测速点名称识别 |
 | `--args "…"` | 额外的程序参数，例如 `--args "-interval 2h -colo HKG,NRT -sl 5"` |
 | `--test` | 安装后先试跑一轮（只打印结果，不上报） |
-| `--version 0.2.0` | 安装指定版本，默认最新 |
+| `--version 0.2.0` | 安装指定版本，默认最新；指定版本时默认不自动更新 |
+| `--auto-update on\|off` | 每天检查一次新版本，有就自动安装（沿用原来的设置），默认开启 |
 | `--mirror <前缀>` | github.com 访问慢时，在每个下载地址前加上这个前缀（也可用环境变量 `GH_PROXY`） |
 | `--dir` / `--no-start` | 安装目录（默认 `/usr/local/bin`，OpenWrt 为 `/usr/bin`）/ 只安装不启动 |
 | `--uninstall` | 停止服务并删除程序和配置 |
 
 再次运行脚本就是升级，没有给出的参数沿用上次的设置。不带参数在终端里运行时，会逐项询问。
+
+**自动更新**：安装时会把同版本的安装脚本（已校验 sha256）留在程序旁边（`cf-ip-probe-install.sh`），并每天在随机时间检查一次 GitHub 上的最新版本，有新版本就下载、校验并重启服务，没有就什么都不做。systemd 用定时器 `cf-ip-probe-update.timer`，OpenWrt / Alpine 用 `/etc/crontabs/root` 里的一行。也可以手动执行 `sudo cf-ip-probe-update` 立即检查。用 `--mirror` 安装的，自动更新也走同一个加速前缀。旧版本装的测速点需要重新运行一次安装命令才会开启。
 
 查看日志：systemd 用 `journalctl -u cf-ip-probe -f`，OpenWrt 用 `logread -f -e cf-ip-probe`，Alpine 看 `/var/log/cf-ip-probe.log`。
 
