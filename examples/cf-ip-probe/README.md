@@ -42,7 +42,7 @@ curl -fsSL https://github.com/cuijianzhuang/polaris-plugins/releases/latest/down
 
 ## 每一轮做什么
 
-1. **延迟**：Cloudflare 的每个 /24 网段随机取一个 IP（约 6000 个），各做 4 次 TCP 连接，算平均延迟和丢包率。`-tl` / `-tll` / `-tlr` 过滤延迟和丢包。
+1. **延迟**：Cloudflare 的每个 /24 网段随机取一个 IP（约 6000 个），各做 4 次 TCP 连接，算平均延迟和丢包率。面板开启了「第三方反代 IP（Shodan）」时，再加上面板给的候选（`GET {api}/cdn-profiles/{id}/ip-candidates`，最多 500 个），和官方 IP 走同样的验证和测速，只有能用且更快的才会上报。旧版面板没有这个接口时自动跳过。`-tl` / `-tll` / `-tlr` 过滤延迟和丢包。
 2. **验证**：按丢包、延迟从好到差，访问 `https://<host>/cdn-cgi/trace`，能返回 Cloudflare 机房代码才算可用，同时得到机房（`-colo` 只保留指定机房）。有些网络会让任何 IP 的 TCP 都「连得上」，这一步把这类假结果去掉。
 3. **下载测速**：对通过验证的前 `-dn` 个 IP 下载测速 `-dt` 秒；低于 `-sl` 的丢掉，换下一个。下载失败的 IP 照样上报（只是没有速度）；连续失败 3 次就放弃本轮下载测速，日志里会写原因。
 4. **上报**：前 `-top` 个按丢包、下载速度、延迟排序，上报到 `POST {api}/cdn-profiles/{id}/preferred-ips`（带速度和机房，面板卡片里能看到）。
@@ -74,6 +74,7 @@ curl -fsSL https://github.com/cuijianzhuang/polaris-plugins/releases/latest/down
 | `-interval` | 1h | 每轮间隔，最少 10 分钟 | |
 | `-verify` | true | 关掉后不做 HTTPS 验证（不推荐） | |
 | `-debug` | 关 | 日志里写出每个 IP 没通过 HTTPS 验证或下载测速的原因 | 同名 |
+| `-candidates` | 开 | 每轮从面板取额外候选 IP（面板开启「第三方反代 IP（Shodan）」时）一起测；关掉只测 Cloudflare 官方 IP 段 | |
 | `-once` / `-dry-run` / `-version` | | 只跑一轮 / 只打印不上报 / 显示版本 | |
 
 **流量**：默认每轮下载测速约 5 个 IP × 5 秒，以 10 MB/s 计约 250 MB；每小时一轮一天约 6 GB。按流量计费的线路请加大 `-interval`、减小 `-dn` / `-dt`，或用 `-dd` 关掉下载测速。
