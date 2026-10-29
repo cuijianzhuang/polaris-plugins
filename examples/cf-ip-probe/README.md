@@ -38,7 +38,55 @@ curl -fsSL https://github.com/cuijianzhuang/polaris-plugins/releases/latest/down
 
 查看日志：systemd 用 `journalctl -u cf-ip-probe -f`，OpenWrt 用 `logread -f -e cf-ip-probe`，Alpine 看 `/var/log/cf-ip-probe.log`。
 
-其他系统（Windows、macOS、FreeBSD）在 [Releases](https://github.com/cuijianzhuang/polaris-plugins/releases) 下载对应压缩包，手动运行。
+其他系统（Windows、macOS、FreeBSD）在 [Releases](https://github.com/cuijianzhuang/polaris-plugins/releases) 下载对应压缩包，手动运行。参数和一键安装命令里的一样，只是写成 `-api`、`-profile`、`-host`、`-token`、`-source`（单个短横线）。
+
+## macOS
+
+一键脚本只支持 Linux，macOS 手动安装（M 系列芯片用 `darwin-arm64`，Intel 用 `darwin-amd64`）：
+
+```sh
+mkdir -p ~/cf-ip-probe && cd ~/cf-ip-probe
+curl -fL -o p.tgz https://github.com/cuijianzhuang/polaris-plugins/releases/latest/download/cf-ip-probe-darwin-arm64.tar.gz
+tar xzf p.tgz && chmod +x cf-ip-probe
+# 先试跑一轮，只打印不上报
+./cf-ip-probe -once -dry-run -api 'https://panel.example.com/<后台路径>/api/v1' -profile <配置档 ID> \
+  -host cdn.example.com -token 'plt_…' -source 上海电信
+```
+
+令牌等参数从面板「添加测速点 → 生成安装命令」生成的命令里抄。能列出 IP 和延迟后，用 launchd 开机自启（`~/Library/LaunchAgents/com.polaris.cf-ip-probe.plist`）：
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.polaris.cf-ip-probe</string>
+  <key>ProgramArguments</key><array>
+    <string>/Users/你的用户名/cf-ip-probe/cf-ip-probe</string>
+    <string>-api</string><string>https://panel.example.com/后台路径/api/v1</string>
+    <string>-profile</string><string>配置档 ID</string>
+    <string>-host</string><string>cdn.example.com</string>
+    <string>-token</string><string>plt_…</string>
+    <string>-source</string><string>上海电信</string>
+    <string>-interval</string><string>2h</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/Users/你的用户名/cf-ip-probe/probe.log</string>
+  <key>StandardErrorPath</key><string>/Users/你的用户名/cf-ip-probe/probe.log</string>
+</dict></plist>
+```
+
+```sh
+launchctl load ~/Library/LaunchAgents/com.polaris.cf-ip-probe.plist     # 启动并开机自启
+tail -f ~/cf-ip-probe/probe.log                                        # 看日志
+launchctl unload ~/Library/LaunchAgents/com.polaris.cf-ip-probe.plist   # 停止
+```
+
+注意：
+
+- 测速要走直连：关掉代理软件，或在 ClashX / Surge 等里让 Cloudflare IP 段直连，否则测的是代理线路。
+- Mac 合盖休眠时不会测；按流量计费的网络把 `-interval` 调大或加 `-dd`。
+- 升级：重新下载压缩包覆盖 `cf-ip-probe`，再 `launchctl unload` / `load` 一次（macOS 版没有自动更新）。
 
 ## 每一轮做什么
 
