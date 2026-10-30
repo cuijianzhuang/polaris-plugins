@@ -231,9 +231,14 @@ func report(ctx context.Context, c config, profile string, rs []Result) error {
 	return nil
 }
 
-// csvSeen is the result.csv modification time last reported, so an old
-// file is not reported again as if it were fresh.
-var csvSeen time.Time
+// Track successful destinations separately: a partial outage must not make
+// failed profiles look delivered. Completed profiles never receive the same
+// measurement again just because another destination needs a retry.
+var csvReports struct {
+	path      string
+	mod       time.Time
+	delivered map[string]bool
+}
 
 func runOnce(ctx context.Context, c config, rng *rand.Rand) {
 	var mod time.Time
@@ -243,8 +248,23 @@ func runOnce(ctx context.Context, c config, rng *rand.Rand) {
 			log.Printf("round failed: %v", err)
 			return
 		}
-		if mod = st.ModTime(); !csvSeen.IsZero() && !mod.After(csvSeen) {
-			log.Printf("%s has not changed since the last report; skipping", c.CSV)
+		mod = st.ModTime()
+		if csvReports.path == c.CSV && mod.Before(csvReports.mod) {
+			log.Printf("%s is older than the last measurement; skipping", c.CSV)
+			return
+		}
+		if csvReports.path != c.CSV || !mod.Equal(csvReports.mod) {
+			csvReports.path, csvReports.mod, csvReports.delivered = c.CSV, mod, map[string]bool{}
+		}
+		pending := false
+		for _, p := range c.Profiles {
+			if !csvReports.delivered[p] {
+				pending = true
+				break
+			}
+		}
+		if !pending {
+			log.Printf("%s has not changed and all profiles received it; skipping", c.CSV)
 			return
 		}
 	}
@@ -267,17 +287,18 @@ func runOnce(ctx context.Context, c config, rng *rand.Rand) {
 	if c.DryRun {
 		return
 	}
-	ok := false
 	for _, p := range c.Profiles {
+		if c.CSV != "" && csvReports.delivered[p] {
+			continue
+		}
 		if err := report(ctx, c, p, rs); err != nil {
 			log.Printf("report to profile %s: %v", p, err)
 		} else {
-			ok = true
+			if c.CSV != "" {
+				csvReports.delivered[p] = true
+			}
 			log.Printf("reported %d IPs to profile %s", len(rs), p)
 		}
-	}
-	if ok && c.CSV != "" {
-		csvSeen = mod
 	}
 }
 
