@@ -42,7 +42,7 @@ type config struct {
 	Port, Sample, Tries, Workers, Top, DownloadN                              int
 	Timeout, Interval, DownloadFor                                            time.Duration
 	MaxLatency, MinLatency, MaxLoss, MinSpeed                                 float64
-	Verify, NoDownload, Once, DryRun, Version, Debug                          bool
+	Verify, NoDownload, Once, DryRun, Version, Debug, Candidates              bool
 }
 
 func envOr(k, d string) string {
@@ -86,6 +86,7 @@ func parseFlags(args []string) (config, error) {
 	fs.BoolVar(&c.DryRun, "dry-run", false, "print the result instead of reporting it")
 	fs.BoolVar(&c.Version, "version", false, "print the version and exit")
 	fs.BoolVar(&c.Debug, "debug", false, "log why each IP failed the HTTPS check or download test")
+	fs.BoolVar(&c.Candidates, "candidates", true, "also test the extra IPs the panel offers (third-party reverse proxies found with Shodan, when turned on in the panel)")
 	if err := fs.Parse(args); err != nil {
 		return c, err
 	}
@@ -188,6 +189,13 @@ func round(ctx context.Context, c config, rng *rand.Rand) ([]Result, error) {
 		return nil, err
 	}
 	ips := sample(rs, c.Sample, rng)
+	if c.Candidates && c.CSV == "" {
+		extra := candidates(ctx, c)
+		ips = addMissing(ips, extra)
+		if len(extra) > 0 {
+			log.Printf("panel offered %d extra candidate IPs", len(extra))
+		}
+	}
 	tested := testAll(ctx, ips, c.Port, c.Tries, c.Workers, c.Timeout)
 	var cands []Result
 	for _, r := range tested {
@@ -203,6 +211,71 @@ func round(ctx context.Context, c config, rng *rand.Rand) ([]Result, error) {
 		log.Print(s)
 	}
 	return out, nil
+}
+
+// maxCandidates caps what the panel may add to a round.
+const maxCandidates = 500
+
+// candidates fetches the extra IPs the panel offers for the profiles (for
+// example third-party reverse proxies). A panel without the endpoint, or
+// any error, just means none: the round goes on with Cloudflare's ranges.
+func candidates(ctx context.Context, c config) []netip.Addr {
+	if c.API == "" || c.Token == "" {
+		return nil
+	}
+	seen := map[netip.Addr]bool{}
+	var out []netip.Addr
+	for _, p := range c.Profiles {
+		ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(c.API, "/")+"/cdn-profiles/"+url.PathEscape(p)+"/ip-candidates", nil)
+		if err != nil {
+			cancel()
+			continue
+		}
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			cancel()
+			if c.Debug {
+				log.Printf("candidates for profile %s: %v", p, err)
+			}
+			continue
+		}
+		var body struct {
+			IPs []string `json:"ips"`
+		}
+		if resp.StatusCode == http.StatusOK {
+			_ = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&body)
+		} else if c.Debug {
+			log.Printf("candidates for profile %s: %s", p, resp.Status)
+		}
+		resp.Body.Close()
+		cancel()
+		for _, s := range body.IPs {
+			a, err := netip.ParseAddr(strings.TrimSpace(s))
+			if err != nil || !a.Unmap().Is4() || seen[a.Unmap()] || len(out) >= maxCandidates {
+				continue
+			}
+			seen[a.Unmap()] = true
+			out = append(out, a.Unmap())
+		}
+	}
+	return out
+}
+
+// addMissing appends the extra addresses not already in ips.
+func addMissing(ips, extra []netip.Addr) []netip.Addr {
+	have := make(map[netip.Addr]bool, len(ips))
+	for _, a := range ips {
+		have[a] = true
+	}
+	for _, a := range extra {
+		if !have[a] {
+			have[a] = true
+			ips = append(ips, a)
+		}
+	}
+	return ips
 }
 
 // report sends the result to one profile.

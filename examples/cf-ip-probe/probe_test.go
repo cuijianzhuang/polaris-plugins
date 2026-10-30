@@ -360,3 +360,31 @@ func TestFlags(t *testing.T) {
 		t.Fatalf("-csv: %v", err)
 	}
 }
+
+// The panel's extra candidates are fetched with the token, deduplicated,
+// limited to IPv4 and added after the sampled addresses; a panel without
+// the endpoint just adds none.
+func TestCandidates(t *testing.T) {
+	var auth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth = r.Header.Get("Authorization")
+		switch r.URL.Path {
+		case "/api/cdn-profiles/a/ip-candidates":
+			w.Write([]byte(`{"ips":["47.242.1.2","8.210.3.4","2001:db8::1","bad","47.242.1.2"]}`))
+		case "/api/cdn-profiles/b/ip-candidates":
+			w.Write([]byte(`{"ips":["8.210.3.4","1.2.3.4"]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	c := config{API: srv.URL + "/api", Token: "plt_x", Profiles: []string{"a", "b", "old"}}
+	got := candidates(context.Background(), c)
+	if fmt.Sprint(got) != "[47.242.1.2 8.210.3.4 1.2.3.4]" || auth != "Bearer plt_x" {
+		t.Fatalf("candidates = %v (auth %q)", got, auth)
+	}
+	ips := addMissing([]netip.Addr{netip.MustParseAddr("104.16.0.1"), netip.MustParseAddr("8.210.3.4")}, got)
+	if fmt.Sprint(ips) != "[104.16.0.1 8.210.3.4 47.242.1.2 1.2.3.4]" {
+		t.Fatalf("merged = %v", ips)
+	}
+}
