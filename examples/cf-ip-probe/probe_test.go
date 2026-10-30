@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -396,5 +397,61 @@ func TestCandidates(t *testing.T) {
 	ips := addMissing([]netip.Addr{netip.MustParseAddr("104.16.0.1"), netip.MustParseAddr("8.210.3.4")}, got)
 	if fmt.Sprint(ips) != "[104.16.0.1 8.210.3.4 47.242.1.2 1.2.3.4]" {
 		t.Fatalf("merged = %v", ips)
+	}
+}
+
+func TestHTTPProbeAndProtocolFlags(t *testing.T) {
+	c, err := parseFlags([]string{"-dry-run", "-source", "http", "-scheme", "http"})
+	if err != nil || c.Port != 80 || !strings.HasPrefix(c.URL, "http://") {
+		t.Fatalf("HTTP defaults %+v %v", c, err)
+	}
+	for _, args := range [][]string{{"-scheme", "ftp"}, {"-scheme", "http", "-url", "https://example.com/file"}, {"-scheme", "http", "-port", "0"}} {
+		if _, err := parseFlags(append([]string{"-dry-run", "-source", "http"}, args...)); err == nil {
+			t.Fatal("accepted invalid flags", args)
+		}
+	}
+	edge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.Host, "edge.example:") {
+			t.Errorf("wrong Host: %s", r.Host)
+		}
+		if r.URL.Path == "/cdn-cgi/trace" {
+			fmt.Fprint(w, "colo=HKG\n")
+			return
+		}
+		w.Header().Set("CF-Ray", "test-HKG")
+		w.Write(bytes.Repeat([]byte("x"), 128<<10))
+	}))
+	defer edge.Close()
+	port := edge.Listener.Addr().(*net.TCPAddr).Port
+	colo, err := verifyScheme(context.Background(), "127.0.0.1", "edge.example", port, "http", time.Second)
+	if err != nil || colo != "HKG" {
+		t.Fatal(colo, err)
+	}
+	speed, colo, err := download(context.Background(), "127.0.0.1", port, "http://edge.example/file", time.Second, time.Second)
+	if err != nil || speed <= 0 || colo != "HKG" {
+		t.Fatal(speed, colo, err)
+	}
+	panel := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Scheme string
+			Port   int
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		if body.Scheme != "http" || body.Port != 80 {
+			t.Errorf("wrong measurement target %+v", body)
+		}
+	}))
+	defer panel.Close()
+	if err := report(context.Background(), config{API: panel.URL, Scheme: "http", Source: "http"}, "fixture", []Result{{IP: "104.16.1.1"}}); err != nil {
+		t.Fatal(err)
+	}
+	redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "https://edge.example/cdn-cgi/trace", http.StatusMovedPermanently)
+	}))
+	defer redirect.Close()
+	if _, err := verifyScheme(context.Background(), "127.0.0.1", "edge.example", redirect.Listener.Addr().(*net.TCPAddr).Port, "http", time.Second); err == nil {
+		t.Fatal("redirect counted as HTTP verification")
 	}
 }

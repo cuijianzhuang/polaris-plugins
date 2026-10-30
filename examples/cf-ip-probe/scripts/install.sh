@@ -11,6 +11,7 @@
 # Options:
 #   --api URL --token T --profile ID[,ID] --source NAME --host DOMAIN
 #   --carrier ct|cu|cm  this point's carrier (default: read from --source)
+#   --instance NAME  independent service, binary and settings for each port/profile
 #   --args "…"       extra cf-ip-probe flags, e.g. "-interval 2h -colo HKG -dd"
 #   --version X.Y.Z  install this release instead of the latest
 #   --mirror PREFIX  GitHub download prefix for networks where github.com is slow
@@ -26,8 +27,8 @@
 set -eu
 
 REPO=cuijianzhuang/polaris-plugins
-NAME=cf-ip-probe
-ENVFILE=/etc/$NAME.env
+APP=cf-ip-probe
+INSTANCE=
 
 API='' TOKEN='' PROFILE='' SOURCE='' CARRIER='' HOST='' ARGS='' VERSION='' MIRROR=${GH_PROXY:-}
 DIR='' TEST=0 START=1 UNINSTALL=0 UPDATE=0 AUTO_UPDATE=''
@@ -38,6 +39,7 @@ die() { printf '错误：%s\n' "$*" >&2; exit 1; }
 need_arg() { [ $# -ge 2 ] || die "$1 需要一个值"; }
 while [ $# -gt 0 ]; do
   case $1 in
+    --instance) need_arg "$@"; INSTANCE=$2; shift ;;
     --api) need_arg "$@"; API=$2; shift ;;
     --token) need_arg "$@"; TOKEN=$2; shift ;;
     --profile) need_arg "$@"; PROFILE=$2; shift ;;
@@ -58,6 +60,13 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+
+case $INSTANCE in *[!a-zA-Z0-9_-]*) die "--instance 只能包含字母、数字、_ 和 -" ;; esac
+[ "${#INSTANCE}" -le 40 ] || die "--instance 最长 40 个字符"
+case $INSTANCE in update|*-update) die "--instance 不能使用保留的 update 或 -update 后缀" ;; esac
+NAME=$APP
+[ -z "$INSTANCE" ] || NAME=$APP-$INSTANCE
+ENVFILE=/etc/$NAME.env
 
 [ "$(id -u)" = 0 ] || die "请用 root 运行（例如在命令前加 sudo）"
 [ "$(uname -s)" = Linux ] || die "一键安装只支持 Linux；其他系统请到 Releases 页面下载对应压缩包"
@@ -83,12 +92,12 @@ CRONTAB=/etc/crontabs/root
 
 stop_service() {
   case $INIT in
-    systemd) systemctl disable --now $NAME >/dev/null 2>&1 || true ;;
+    systemd) systemctl disable --now "$NAME" >/dev/null 2>&1 || true ;;
     procd|openrc)
-      if [ -x /etc/init.d/$NAME ]; then
-        /etc/init.d/$NAME stop >/dev/null 2>&1 || true
-        if [ "$INIT" = procd ]; then /etc/init.d/$NAME disable >/dev/null 2>&1 || true
-        else rc-update del $NAME default >/dev/null 2>&1 || true; fi
+      if [ -x /etc/init.d/"$NAME" ]; then
+        /etc/init.d/"$NAME" stop >/dev/null 2>&1 || true
+        if [ "$INIT" = procd ]; then /etc/init.d/"$NAME" disable >/dev/null 2>&1 || true
+        else rc-update del "$NAME" default >/dev/null 2>&1 || true; fi
       fi ;;
   esac
 }
@@ -105,11 +114,15 @@ reload_cron() {
 }
 remove_auto_update() {
   if [ "$INIT" = systemd ]; then
-    systemctl disable --now $NAME-update.timer >/dev/null 2>&1 || true
-    rm -f /etc/systemd/system/$NAME-update.timer /etc/systemd/system/$NAME-update.service
+    systemctl disable --now "$NAME"-update.timer >/dev/null 2>&1 || true
+    rm -f /etc/systemd/system/"$NAME"-update.timer /etc/systemd/system/"$NAME"-update.service
   fi
-  if [ -f "$CRONTAB" ] && grep -q "$NAME-update" "$CRONTAB"; then
-    sed -i "/$NAME-update/d" "$CRONTAB"
+  if [ -f "$CRONTAB" ]; then
+    # Match the command field exactly; one instance must not remove another.
+    cron_tmp=$(mktemp)
+    awk -v updater="$UPDATER" '$6 != updater' "$CRONTAB" > "$cron_tmp"
+    cat "$cron_tmp" > "$CRONTAB"
+    rm -f "$cron_tmp"
     reload_cron
   fi
 }
@@ -117,7 +130,7 @@ remove_auto_update() {
 if [ "$UNINSTALL" = 1 ]; then
   stop_service
   remove_auto_update
-  rm -f "$BIN" "$UPDATER" "$INSTALLER" "$ENVFILE" /etc/systemd/system/$NAME.service /etc/init.d/$NAME
+  rm -f "$BIN" "$UPDATER" "$INSTALLER" "$ENVFILE" /etc/systemd/system/"$NAME".service /etc/init.d/"$NAME"
   if [ "$INIT" = systemd ]; then systemctl daemon-reload || true; fi
   say "已卸载 $NAME。面板里的测速点记录可在 CDN 配置档的「测速点」卡片里移除。"
   exit 0
@@ -161,10 +174,10 @@ fetch_text() {
 }
 
 if [ -n "$VERSION" ]; then
-  BASE=https://github.com/$REPO/releases/download/$NAME-v$VERSION
+  BASE=https://github.com/$REPO/releases/download/$APP-v$VERSION
 else
   TAG=$(fetch_text "https://api.github.com/repos/$REPO/releases?per_page=30" 2>/dev/null |
-    sed -n 's/.*"tag_name": *"\('$NAME'-v[^"]*\)".*/\1/p' | head -n 1 || true)
+    sed -n 's/.*"tag_name": *"\('$APP'-v[^"]*\)".*/\1/p' | head -n 1 || true)
   if [ -n "$TAG" ]; then
     BASE=https://github.com/$REPO/releases/download/$TAG
   else
@@ -175,15 +188,15 @@ fi
 if [ "$UPDATE" = 1 ]; then
   [ -x "$BIN" ] || die "还没有安装 $NAME，先不带 --update 运行一次"
   [ -n "${TAG:-}" ] || [ -n "$VERSION" ] || { say "没能查到最新版本，下次再试"; exit 0; }
-  have=$("$BIN" -version 2>/dev/null | sed -n "s/^$NAME //p")
-  want=${VERSION:-${TAG#"$NAME"-v}}
+  have=$("$BIN" -version 2>/dev/null | sed -n "s/^$APP //p")
+  want=${VERSION:-${TAG#"$APP"-v}}
   if [ "$have" = "$want" ]; then say "已是最新版本 $have"; exit 0; fi
   say "发现新版本：$have → $want"
 fi
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT INT TERM
-PKG=$NAME-linux-$ARCH.tar.gz
+PKG=$APP-linux-$ARCH.tar.gz
 say "下载 $BASE/$PKG"
 fetch "$MIRROR$BASE/$PKG" "$TMP/$PKG" || die "下载失败；github.com 访问慢时可以加 --mirror <加速前缀>"
 if fetch "$MIRROR$BASE/sha256sums.txt" "$TMP/sha256sums.txt" 2>/dev/null && command -v sha256sum >/dev/null 2>&1; then
@@ -194,8 +207,8 @@ if fetch "$MIRROR$BASE/sha256sums.txt" "$TMP/sha256sums.txt" 2>/dev/null && comm
 else
   say "提示：没能校验 sha256（缺少 sha256sums.txt 或 sha256sum 命令）"
 fi
-tar -xzf "$TMP/$PKG" -C "$TMP" $NAME || die "解压失败"
-"$TMP/$NAME" -version >/dev/null 2>&1 || die "下载的程序在这台机器上不能运行（架构 $ARCH）"
+tar -xzf "$TMP/$PKG" -C "$TMP" $APP || die "解压失败"
+"$TMP/$APP" -version >/dev/null 2>&1 || die "下载的程序在这台机器上不能运行（架构 $ARCH）"
 # Keep this release's installer (sha256 checked) for the daily update check.
 HAVE_INSTALLER=0
 if [ "$AUTO_UPDATE" = on ] && [ -f "$TMP/sha256sums.txt" ] && command -v sha256sum >/dev/null 2>&1 &&
@@ -247,7 +260,7 @@ case $API in http://*|https://*) ;; *) die "--api 要以 http:// 或 https:// �
 # --- install ---------------------------------------------------------------
 stop_service
 mkdir -p "$DIR"
-install -m 0755 "$TMP/$NAME" "$BIN" 2>/dev/null || { cp "$TMP/$NAME" "$BIN" && chmod 0755 "$BIN"; }
+install -m 0755 "$TMP/$APP" "$BIN" 2>/dev/null || { cp "$TMP/$APP" "$BIN" && chmod 0755 "$BIN"; }
 umask 077
 cat > "$ENVFILE" <<EOF
 # cf-ip-probe settings; edit and restart the service to apply.
@@ -273,11 +286,11 @@ if [ "$AUTO_UPDATE" = on ] && [ "$HAVE_INSTALLER" = 1 ] && [ "$INIT" != none ]; 
   cat > "$UPDATER" <<EOF
 #!/bin/sh
 # Installs a newer cf-ip-probe release when there is one; settings are kept.
-exec sh $INSTALLER --update --dir $DIR
+exec sh $INSTALLER --update --dir $DIR${INSTANCE:+ --instance $INSTANCE}
 EOF
   chmod 0755 "$UPDATER"
   if [ "$INIT" = systemd ]; then
-    cat > /etc/systemd/system/$NAME-update.service <<EOF
+    cat > /etc/systemd/system/"$NAME"-update.service <<EOF
 [Unit]
 Description=Update cf-ip-probe to the latest release
 After=network-online.target
@@ -287,7 +300,7 @@ Wants=network-online.target
 Type=oneshot
 ExecStart=$UPDATER
 EOF
-    cat > /etc/systemd/system/$NAME-update.timer <<EOF
+    cat > /etc/systemd/system/"$NAME"-update.timer <<EOF
 [Unit]
 Description=Daily cf-ip-probe update check
 
@@ -300,7 +313,7 @@ Persistent=true
 WantedBy=timers.target
 EOF
     systemctl daemon-reload
-    systemctl enable --now $NAME-update.timer >/dev/null 2>&1 || true
+    systemctl enable --now "$NAME"-update.timer >/dev/null 2>&1 || true
     UPD="systemctl list-timers $NAME-update.timer"
   else
     # A random time of day, so many probes do not all ask GitHub at once.
@@ -323,7 +336,7 @@ fi
 
 case $INIT in
   systemd)
-    cat > /etc/systemd/system/$NAME.service <<EOF
+    cat > /etc/systemd/system/"$NAME".service <<EOF
 [Unit]
 Description=cf-ip-probe (Polaris CDN speed-test point)
 After=network-online.target
@@ -343,10 +356,10 @@ WantedBy=multi-user.target
 EOF
     systemctl daemon-reload
     LOGS="journalctl -u $NAME -f"
-    if [ "$START" = 1 ]; then systemctl enable --now $NAME >/dev/null 2>&1 && systemctl restart $NAME; fi
+    if [ "$START" = 1 ]; then systemctl enable --now "$NAME" >/dev/null 2>&1 && systemctl restart "$NAME"; fi
     ;;
   procd)
-    cat > /etc/init.d/$NAME <<EOF
+    cat > /etc/init.d/"$NAME" <<EOF
 #!/bin/sh /etc/rc.common
 START=99
 USE_PROCD=1
@@ -362,12 +375,12 @@ start_service() {
 	procd_close_instance
 }
 EOF
-    chmod 755 /etc/init.d/$NAME
+    chmod 755 /etc/init.d/"$NAME"
     LOGS="logread -f -e $NAME"
-    if [ "$START" = 1 ]; then /etc/init.d/$NAME enable && /etc/init.d/$NAME restart; fi
+    if [ "$START" = 1 ]; then /etc/init.d/"$NAME" enable && /etc/init.d/"$NAME" restart; fi
     ;;
   openrc)
-    cat > /etc/init.d/$NAME <<EOF
+    cat > /etc/init.d/"$NAME" <<EOF
 #!/sbin/openrc-run
 name=$NAME
 description="Polaris CDN speed-test point"
@@ -386,9 +399,9 @@ start_pre() {
 	command_args="\$PROBE_ARGS"
 }
 EOF
-    chmod 755 /etc/init.d/$NAME
+    chmod 755 /etc/init.d/"$NAME"
     LOGS="tail -f /var/log/$NAME.log"
-    if [ "$START" = 1 ]; then rc-update add $NAME default >/dev/null && rc-service $NAME restart; fi
+    if [ "$START" = 1 ]; then rc-update add "$NAME" default >/dev/null && rc-service "$NAME" restart; fi
     ;;
   none)
     say "没有识别到 systemd / procd / OpenRC，请自己让它常驻，例如："

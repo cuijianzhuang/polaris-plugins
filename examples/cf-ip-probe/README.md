@@ -162,8 +162,24 @@ go build -o cf-ip-probe .
 
 ### 测速端口与上报
 
-`-port` 控制 TCP 延迟、HTTPS 验证和下载测试使用的端口，取值 1–65535，默认 443。上报包含 `scheme: "https"` 和实际 `port`，面板可分别维护 443、8443 等端口的结果。使用非默认端口时，例如 `-port 8443`，请确认目标 CDN 支持该 HTTPS 端口。
+`-port` 控制 TCP 延迟、所选协议验证和下载测试使用的端口，取值 1–65535，HTTPS 默认 443，HTTP 默认 80。上报包含实际 `scheme` 和 `port`，面板可分别维护 443、8443 等端口的结果。使用非默认端口时，例如 `-port 8443`，请确认目标 CDN 支持该 HTTPS 端口。
 
-导入 CSV 时，`-port` 应与生成文件时实际测试的端口一致；CSV 本身无法可靠推断端口。每个测速进程测一个端口，需要覆盖多个端口时使用不同名称的独立进程或机器。新面板生成的安装命令通过 `--args '-port 8443'` 设置端口；同名测速点重新配对会撤销原令牌。
+导入 CSV 时，`-port` 应与生成文件时实际测试的端口一致；CSV 本身无法可靠推断端口。每个测速进程测一个端口，需要覆盖多个端口时使用不同名称的独立进程或机器。新面板生成的安装命令通过 `--args '-scheme https -port 8443'` 设置协议与端口；同名测速点重新配对会撤销原令牌。
 
-旧面板会忽略新增的上报字段；建议先更新面板，再更新测速程序，以启用按端口隔离的结果。该程序当前仍只验证 HTTPS。
+旧 HTTPS 面板会忽略新增的上报字段。启用新面板生成的 HTTP / 多实例命令时，应先发布本版程序与安装脚本，再更新面板；旧安装脚本无法识别 `--instance`。
+
+
+### HTTP 和多实例
+
+`-scheme http` 测量 HTTP（默认端口 80），`-scheme https` 测量 HTTPS（默认端口 443）。`-port` 指定实际测量端口；验证请求、下载和上报保持同一协议和端口。显式 `-url` / `PROBE_URL` 必须使用所选协议；HTTP 端口被强制重定向到 HTTPS 时会拒绝把它当作 HTTP 验证成功。CSV 模式同样必须声明原测量使用的协议和端口，不会自动推断。
+
+安装脚本新增 `--instance NAME`，为不同测速点建立独立二进制、配置、服务、日志和自动更新任务。名称使用最多 40 个字母、数字、下划线或连字符；`update` 和 `-update` 后缀为自动更新保留，不能用作实例名。省略时保留旧的默认单实例行为。示例：
+
+```sh
+# 将示例令牌和配置档替换为面板配对生成的值；两个测速点使用独立令牌。
+sh install.sh --instance http80 --source point-http80 --api https://panel.example.com/api/v1 --profile HTTP_PROFILE --token HTTP_TOKEN --host cdn.example.com --args '-scheme http -port 80'
+sh install.sh --instance https8443 --source point-https8443 --api https://panel.example.com/api/v1 --profile HTTPS_PROFILE --token HTTPS_TOKEN --host cdn.example.com --args '-scheme https -port 8443'
+sh install.sh --instance http80 --uninstall
+```
+
+第三条只删除 `http80`，不会删除默认实例或 `https8443`。面板配对生成稳定实例名，同名测速点重新配对后在原实例更新配置；不同端口需使用不同测速点名称。迁移旧默认实例时，确认新实例上报后，可另行卸载旧默认实例，避免其继续使用已撤销的旧令牌。

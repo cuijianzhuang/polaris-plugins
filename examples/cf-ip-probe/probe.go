@@ -224,10 +224,13 @@ func viaIP(ip string, port int, host string, timeout time.Duration) (*http.Clien
 // Cloudflare edge answers with its data centre ("colo="). An IP that only
 // accepts TCP but does not serve the site is dropped.
 func verify(ctx context.Context, ip, host string, port int, timeout time.Duration) (string, error) {
+	return verifyScheme(ctx, ip, host, port, "https", timeout)
+}
+func verifyScheme(ctx context.Context, ip, host string, port int, scheme string, timeout time.Duration) (string, error) {
 	cl, done := viaIP(ip, port, host, timeout)
 	defer done()
 	cl.Timeout = 3 * timeout
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("https://%s:%d/cdn-cgi/trace", host, port), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s://%s/cdn-cgi/trace", scheme, net.JoinHostPort(host, strconv.Itoa(port))), nil)
 	if err != nil {
 		return "", err
 	}
@@ -305,17 +308,17 @@ func download(ctx context.Context, ip string, port int, rawURL string, limit, ti
 
 // picker turns ranked TCP results into the IPs to report.
 type picker struct {
-	Top         int
-	Host, URL   string
-	Port        int
-	Verify      bool
-	DownloadN   int // IPs to download-test; 0 = none
-	DownloadFor time.Duration
-	Timeout     time.Duration
-	Filter      filter
-	Debug       bool
-	verify      func(ctx context.Context, ip, host string, port int, timeout time.Duration) (string, error)
-	download    func(ctx context.Context, ip string, port int, rawURL string, limit, timeout time.Duration) (float64, string, error)
+	Top               int
+	Host, URL, Scheme string
+	Port              int
+	Verify            bool
+	DownloadN         int // IPs to download-test; 0 = none
+	DownloadFor       time.Duration
+	Timeout           time.Duration
+	Filter            filter
+	Debug             bool
+	verify            func(ctx context.Context, ip, host string, port int, timeout time.Duration) (string, error)
+	download          func(ctx context.Context, ip string, port int, rawURL string, limit, timeout time.Duration) (float64, string, error)
 
 	// What happened, for the round summary.
 	checked, verified, attempted, downloaded int
@@ -358,7 +361,7 @@ func isTimeout(err error) bool {
 // still follows the ranking.
 const verifyWorkers = 16
 
-// pick walks the candidates best first: HTTPS check (-verify), data centre
+// pick walks the candidates best first: HTTP(S) check (-verify), data centre
 // (-colo), then a download test for the first DownloadN that pass (-sl
 // drops slow ones and the next candidate is tried). An IP whose download
 // test fails is still reported without a speed, unless -sl is set; after
@@ -368,7 +371,13 @@ const verifyWorkers = 16
 // are filled with checked IPs that were not download-tested.
 func (p *picker) pick(ctx context.Context, cands []Result) []Result {
 	if p.verify == nil {
-		p.verify = verify
+		p.verify = func(ctx context.Context, ip, host string, port int, timeout time.Duration) (string, error) {
+			scheme := p.Scheme
+			if scheme == "" {
+				scheme = "https"
+			}
+			return verifyScheme(ctx, ip, host, port, scheme, timeout)
+		}
 	}
 	if p.download == nil {
 		p.download = download
@@ -476,7 +485,11 @@ func (p *picker) pick(ctx context.Context, cands []Result) []Result {
 func (p *picker) summary() string {
 	var b strings.Builder
 	if p.Verify {
-		fmt.Fprintf(&b, "HTTPS check: %d of %d passed", p.verified, p.checked)
+		scheme := "HTTPS"
+		if p.Scheme == "http" {
+			scheme = "HTTP"
+		}
+		fmt.Fprintf(&b, "%s check: %d of %d passed", scheme, p.verified, p.checked)
 		if t := p.verifyErrs.top(); t != "" {
 			fmt.Fprintf(&b, ", most common failure: %s", t)
 		}
