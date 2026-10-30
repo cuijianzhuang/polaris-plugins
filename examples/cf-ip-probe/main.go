@@ -3,7 +3,7 @@
 // Run it on a machine where your users are (a home router, a Raspberry Pi,
 // a domestic VPS; ideally one per carrier). Every round it tests one IP in
 // each Cloudflare /24 for TCP latency and loss, checks the best ones really
-// serve HTTPS (and which data centre answers), download-tests the first
+// serve HTTP(S) (and which data centre answers), download-tests the first
 // few, and reports the top N to the panel. It can also report a
 // CloudflareSpeedTest result.csv instead of testing (-csv).
 //
@@ -37,12 +37,12 @@ import (
 var version = "dev"
 
 type config struct {
-	API, Token, Source, Carrier, Host, RangesURL, RangesFile, URL, CSV, Colos string
-	Profiles                                                                  []string
-	Port, Sample, Tries, Workers, Top, DownloadN                              int
-	Timeout, Interval, DownloadFor                                            time.Duration
-	MaxLatency, MinLatency, MaxLoss, MinSpeed                                 float64
-	Verify, NoDownload, Once, DryRun, Version, Debug, Candidates              bool
+	API, Token, Source, Carrier, Host, RangesURL, RangesFile, URL, CSV, Colos, Scheme string
+	Profiles                                                                          []string
+	Port, Sample, Tries, Workers, Top, DownloadN                                      int
+	Timeout, Interval, DownloadFor                                                    time.Duration
+	MaxLatency, MinLatency, MaxLoss, MinSpeed                                         float64
+	Verify, NoDownload, Once, DryRun, Version, Debug, Candidates                      bool
 }
 
 func envOr(k, d string) string {
@@ -61,10 +61,11 @@ func parseFlags(args []string) (config, error) {
 	fs.StringVar(&profiles, "profile", envOr("POLARIS_CDN_PROFILE", ""), "CDN profile id(s), comma separated (env POLARIS_CDN_PROFILE)")
 	fs.StringVar(&c.Source, "source", envOr("PROBE_SOURCE", ""), "name of this speed-test point, e.g. 上海电信 (env PROBE_SOURCE)")
 	fs.StringVar(&c.Carrier, "carrier", envOr("PROBE_CARRIER", ""), "this point's carrier: ct (Telecom), cu (Unicom), cm (Mobile); empty lets the panel read it from -source (env PROBE_CARRIER)")
-	fs.StringVar(&c.Host, "host", envOr("PROBE_HOST", "www.cloudflare.com"), "a site on Cloudflare used to check that an IP serves HTTPS; your CDN domain works best (env PROBE_HOST)")
+	fs.StringVar(&c.Host, "host", envOr("PROBE_HOST", "www.cloudflare.com"), "a site on Cloudflare used to check that an IP serves the selected protocol; your CDN domain works best (env PROBE_HOST)")
 	fs.StringVar(&c.RangesURL, "ranges-url", "", "fetch IPv4 ranges from this URL (e.g. https://www.cloudflare.com/ips-v4) instead of the built-in list")
 	fs.StringVar(&c.RangesFile, "f", "", "read IPv4 ranges from this file (one CIDR or IP per line), like CloudflareSpeedTest's ip.txt")
-	fs.IntVar(&c.Port, "port", 443, "port to test (latency, HTTPS check and download)")
+	fs.StringVar(&c.Scheme, "scheme", "https", "client protocol to test: http or https")
+	fs.IntVar(&c.Port, "port", 0, "actual test port (default HTTPS:443, HTTP:80)")
 	fs.IntVar(&c.Sample, "sample", 0, "/24 blocks to test per round, one random IP each; 0 = every block")
 	fs.IntVar(&c.Tries, "tries", 4, "TCP connects per IP")
 	fs.IntVar(&c.Workers, "workers", 200, "concurrent latency tests (lower it on a router)")
@@ -81,11 +82,11 @@ func parseFlags(args []string) (config, error) {
 	fs.StringVar(&c.URL, "url", envOr("PROBE_URL", "https://speed.cloudflare.com/__down?bytes=50000000"), "download test file; a large file on your own Cloudflare site is most reliable (env PROBE_URL)")
 	fs.StringVar(&c.CSV, "csv", "", "report a CloudflareSpeedTest result.csv instead of testing (re-read every round)")
 	fs.DurationVar(&c.Interval, "interval", time.Hour, "time between rounds")
-	fs.BoolVar(&c.Verify, "verify", true, "check each IP serves HTTPS through /cdn-cgi/trace (gives the data centre)")
+	fs.BoolVar(&c.Verify, "verify", true, "check each IP serves the selected protocol through /cdn-cgi/trace (gives the data centre)")
 	fs.BoolVar(&c.Once, "once", false, "run one round and exit")
 	fs.BoolVar(&c.DryRun, "dry-run", false, "print the result instead of reporting it")
 	fs.BoolVar(&c.Version, "version", false, "print the version and exit")
-	fs.BoolVar(&c.Debug, "debug", false, "log why each IP failed the HTTPS check or download test")
+	fs.BoolVar(&c.Debug, "debug", false, "log why each IP failed the HTTP(S) check or download test")
 	fs.BoolVar(&c.Candidates, "candidates", true, "also test the extra IPs the panel offers (third-party reverse proxies found with Shodan, when turned on in the panel)")
 	if err := fs.Parse(args); err != nil {
 		return c, err
@@ -113,6 +114,28 @@ func parseFlags(args []string) (config, error) {
 	case c.API == "" || c.Token == "" || len(c.Profiles) == 0:
 		return c, errors.New("-api, -token and -profile are required (or use -dry-run)")
 	}
+	c.Scheme = strings.ToLower(c.Scheme)
+	if c.Scheme != "http" && c.Scheme != "https" {
+		return c, errors.New("-scheme must be http or https")
+	}
+	portSet, urlSet := false, false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "port" {
+			portSet = true
+		}
+		if f.Name == "url" {
+			urlSet = true
+		}
+	})
+	if !portSet {
+		c.Port = 443
+		if c.Scheme == "http" {
+			c.Port = 80
+		}
+	}
+	if !urlSet && os.Getenv("PROBE_URL") == "" {
+		c.URL = c.Scheme + "://speed.cloudflare.com/__down?bytes=50000000"
+	}
 	if c.Port < 1 || c.Port > 65535 {
 		return c, errors.New("-port must be between 1 and 65535")
 	}
@@ -124,14 +147,14 @@ func parseFlags(args []string) (config, error) {
 	}
 	if c.CSV == "" {
 		if c.Colos != "" && !c.Verify && c.DownloadN == 0 {
-			return c, errors.New("-colo needs the HTTPS check (-verify) or the download test to learn each IP's data centre")
+			return c, errors.New("-colo needs the HTTP(S) check (-verify) or the download test to learn each IP's data centre")
 		}
 		if c.MinSpeed > 0 && c.DownloadN == 0 {
 			return c, errors.New("-sl needs the download test (drop -dd or raise -dn)")
 		}
 		if c.DownloadN > 0 {
-			if u, err := url.Parse(c.URL); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Hostname() == "" {
-				return c, fmt.Errorf("-url %q is not an http(s) URL", c.URL)
+			if u, err := url.Parse(c.URL); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Hostname() == "" || u.Scheme != c.Scheme {
+				return c, fmt.Errorf("-url %q must use the selected -scheme", c.URL)
 			}
 			if c.DownloadFor < time.Second {
 				return c, errors.New("-dt must be at least 1s")
@@ -207,7 +230,7 @@ func round(ctx context.Context, c config, rng *rand.Rand) ([]Result, error) {
 		}
 	}
 	log.Printf("tested %d IPs, %d answered, %d within the latency/loss limits", len(ips), len(tested), len(cands))
-	p := &picker{Top: c.Top, Host: c.Host, URL: c.URL, Port: c.Port, Verify: c.Verify, DownloadN: c.DownloadN,
+	p := &picker{Scheme: c.Scheme, Top: c.Top, Host: c.Host, URL: c.URL, Port: c.Port, Verify: c.Verify, DownloadN: c.DownloadN,
 		DownloadFor: c.DownloadFor, Timeout: 2 * c.Timeout, Filter: f, Debug: c.Debug}
 	out := p.pick(ctx, cands)
 	if s := p.summary(); s != "" {
@@ -286,8 +309,15 @@ func report(ctx context.Context, c config, profile string, rs []Result) error {
 	port := c.Port
 	if port == 0 {
 		port = 443
+		if c.Scheme == "http" {
+			port = 80
+		}
 	}
-	payload := map[string]any{"source": c.Source, "ips": rs, "port": port, "scheme": "https"}
+	scheme := c.Scheme
+	if scheme == "" {
+		scheme = "https"
+	}
+	payload := map[string]any{"source": c.Source, "ips": rs, "port": port, "scheme": scheme}
 	if c.Carrier != "" {
 		payload["carrier"] = c.Carrier
 	}

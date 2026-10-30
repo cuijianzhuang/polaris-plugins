@@ -98,6 +98,8 @@ jobs:
         run: go vet ./... && go test -race ./...
       - name: Installer syntax
         run: sh -n examples/cf-ip-probe/scripts/install.sh && shellcheck -s sh examples/cf-ip-probe/scripts/install.sh
+      - name: Independent installer instances
+        run: python3 examples/cf-ip-probe/scripts/installer-instances-test.py
       - name: Build
         run: examples/cf-ip-probe/scripts/build.sh "${{ steps.v.outputs.version }}" dist
       - name: Smoke test
