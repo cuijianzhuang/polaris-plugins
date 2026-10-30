@@ -112,6 +112,9 @@ func parseFlags(args []string) (config, error) {
 	case c.API == "" || c.Token == "" || len(c.Profiles) == 0:
 		return c, errors.New("-api, -token and -profile are required (or use -dry-run)")
 	}
+	if c.Port < 1 || c.Port > 65535 {
+		return c, errors.New("-port must be between 1 and 65535")
+	}
 	if c.Tries < 1 || c.Top < 1 || c.Top > 200 || c.Workers < 1 || c.Workers > 1000 || c.Sample < 0 || c.DownloadN < 0 {
 		return c, errors.New("need tries >= 1, 1 <= top <= 200, 1 <= workers <= 1000, sample >= 0, dn >= 0")
 	}
@@ -207,7 +210,11 @@ func round(ctx context.Context, c config, rng *rand.Rand) ([]Result, error) {
 
 // report sends the result to one profile.
 func report(ctx context.Context, c config, profile string, rs []Result) error {
-	payload := map[string]any{"source": c.Source, "ips": rs}
+	port := c.Port
+	if port == 0 {
+		port = 443
+	}
+	payload := map[string]any{"source": c.Source, "ips": rs, "port": port, "scheme": "https"}
 	if c.Carrier != "" {
 		payload["carrier"] = c.Carrier
 	}
