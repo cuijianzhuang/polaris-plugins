@@ -296,6 +296,8 @@ func TestVerifyEdge(t *testing.T) {
 
 func TestReport(t *testing.T) {
 	var got struct {
+		Port    int      `json:"port"`
+		Scheme  string   `json:"scheme"`
 		Source  string   `json:"source"`
 		Carrier string   `json:"carrier"`
 		IPs     []Result `json:"ips"`
@@ -313,8 +315,16 @@ func TestReport(t *testing.T) {
 	if err := report(context.Background(), c, "cf1", rs); err != nil {
 		t.Fatal(err)
 	}
-	if path != "/admin/api/v1/cdn-profiles/cf1/preferred-ips" || auth != "Bearer plt_x" || got.Source != "上海电信" || got.Carrier != "ct" || len(got.IPs) != 2 || got.IPs[1].Loss != 0.25 {
+	if path != "/admin/api/v1/cdn-profiles/cf1/preferred-ips" || auth != "Bearer plt_x" || got.Port != 443 || got.Scheme != "https" || got.Source != "上海电信" || got.Carrier != "ct" || len(got.IPs) != 2 || got.IPs[1].Loss != 0.25 {
 		t.Fatalf("path=%s auth=%s body=%+v", path, auth, got)
+	}
+
+	c.Port = 8443
+	if err := report(context.Background(), c, "cf1", rs); err != nil {
+		t.Fatal(err)
+	}
+	if got.Port != 8443 || got.Scheme != "https" {
+		t.Fatalf("custom measurement target missing: %+v", got)
 	}
 
 	refuse := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -339,7 +349,7 @@ func TestFlags(t *testing.T) {
 	if _, err := parseFlags([]string{"-source", "x", "-dry-run", "-interval", "1m"}); err == nil {
 		t.Fatal("a 1-minute interval accepted")
 	}
-	for _, bad := range [][]string{
+	for _, bad := range [][]string{{"-port", "0"}, {"-port", "-1"}, {"-port", "65536"},
 		{"-dd", "-sl", "5"},                      // speed limit without a download test
 		{"-dd", "-verify=false", "-colo", "HKG"}, // nothing tells the data centre
 		{"-tlr", "2"},
