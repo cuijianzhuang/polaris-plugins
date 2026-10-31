@@ -37,12 +37,12 @@ import (
 var version = "dev"
 
 type config struct {
-	API, Token, Source, Carrier, Host, RangesURL, RangesFile, URL, CSV, Colos, Scheme string
-	Profiles                                                                          []string
-	Port, Sample, Tries, Workers, Top, DownloadN                                      int
-	Timeout, Interval, DownloadFor                                                    time.Duration
-	MaxLatency, MinLatency, MaxLoss, MinSpeed                                         float64
-	Verify, NoDownload, Once, DryRun, Version, Debug, Candidates                      bool
+	API, Token, Source, Carrier, Region, Host, RangesURL, RangesFile, URL, CSV, Colos, Scheme string
+	Profiles                                                                                  []string
+	Port, Sample, Tries, Workers, Top, DownloadN                                              int
+	Timeout, Interval, DownloadFor                                                            time.Duration
+	MaxLatency, MinLatency, MaxLoss, MinSpeed                                                 float64
+	Verify, NoDownload, Once, DryRun, Version, Debug, Candidates                              bool
 }
 
 func envOr(k, d string) string {
@@ -61,6 +61,7 @@ func parseFlags(args []string) (config, error) {
 	fs.StringVar(&profiles, "profile", envOr("POLARIS_CDN_PROFILE", ""), "CDN profile id(s), comma separated (env POLARIS_CDN_PROFILE)")
 	fs.StringVar(&c.Source, "source", envOr("PROBE_SOURCE", ""), "name of this speed-test point, e.g. 上海电信 (env PROBE_SOURCE)")
 	fs.StringVar(&c.Carrier, "carrier", envOr("PROBE_CARRIER", ""), "this point's carrier: ct (Telecom), cu (Unicom), cm (Mobile); empty lets the panel read it from -source (env PROBE_CARRIER)")
+	fs.StringVar(&c.Region, "region", envOr("PROBE_REGION", ""), "province/region of this measurement point, e.g. CN-31 or 上海 (env PROBE_REGION)")
 	fs.StringVar(&c.Host, "host", envOr("PROBE_HOST", "www.cloudflare.com"), "a site on Cloudflare used to check that an IP serves the selected protocol; your CDN domain works best (env PROBE_HOST)")
 	fs.StringVar(&c.RangesURL, "ranges-url", "", "fetch IPv4 ranges from this URL (e.g. https://www.cloudflare.com/ips-v4) instead of the built-in list")
 	fs.StringVar(&c.RangesFile, "f", "", "read IPv4 ranges from this file (one CIDR or IP per line), like CloudflareSpeedTest's ip.txt")
@@ -317,7 +318,7 @@ func report(ctx context.Context, c config, profile string, rs []Result) error {
 	if scheme == "" {
 		scheme = "https"
 	}
-	payload := map[string]any{"source": c.Source, "ips": rs, "port": port, "scheme": scheme}
+	payload := map[string]any{"region": c.Region, "source": c.Source, "ips": rs, "port": port, "scheme": scheme}
 	if c.Carrier != "" {
 		payload["carrier"] = c.Carrier
 	}

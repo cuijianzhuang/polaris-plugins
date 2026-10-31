@@ -36,12 +36,14 @@ shutil.copyfile(Path(os.environ['INSTALL_FIXTURES'])/name,out)
    assert r.returncode==0,r.stdout+r.stderr
   for instance,port in [('alpha',80),('beta',8443),('',443)]:
    args=['--instance',instance] if instance else []
-   call(*args,'--no-start','--api','https://panel.example/api/v1','--token','synthetic-token-'+(instance or 'default'),'--profile','fixture','--source',instance or 'default','--host','cdn.example','--args',f'-scheme {"http" if port==80 else "https"} -port {port}')
+   call(*args,'--no-start','--api','https://panel.example/api/v1','--token','synthetic-token-'+(instance or 'default'),'--profile','fixture','--source',instance or 'default','--region','CN-31' if instance=='alpha' else 'CN-44','--host','cdn.example','--args',f'-scheme {"http" if port==80 else "https"} -port {port}')
    name='cf-ip-probe'+('-'+instance if instance else '')
    assert (bin/name).exists()
    assert f'-port {port}' in (etc/(name+'.env')).read_text()
+   assert 'PROBE_REGION=' in (etc/(name+'.env')).read_text()
    service=etc/'systemd/system'/f'{name}.service' if init=='systemd' else etc/'init.d'/name
    assert str(etc/(name+'.env')) in service.read_text()
+   if init=='procd':assert 'PROBE_REGION=' in service.read_text()
    updater=(bin/(name+'-update')).read_text()
    if instance:assert '--instance '+instance in updater
   before=(etc/'cf-ip-probe-beta.env').read_bytes()
