@@ -10,6 +10,7 @@
 #
 # Options:
 #   --api URL --token T --profile ID[,ID] --source NAME --host DOMAIN
+#   --region CODE    measurement point province/region, e.g. CN-31 (Shanghai)
 #   --carrier ct|cu|cm  this point's carrier (default: read from --source)
 #   --instance NAME  independent service, binary and settings for each port/profile
 #   --args "…"       extra cf-ip-probe flags, e.g. "-interval 2h -colo HKG -dd"
@@ -30,7 +31,7 @@ REPO=cuijianzhuang/polaris-plugins
 APP=cf-ip-probe
 INSTANCE=
 
-API='' TOKEN='' PROFILE='' SOURCE='' CARRIER='' HOST='' ARGS='' VERSION='' MIRROR=${GH_PROXY:-}
+API='' TOKEN='' PROFILE='' SOURCE='' CARRIER='' REGION='' HOST='' ARGS='' VERSION='' MIRROR=${GH_PROXY:-}
 DIR='' TEST=0 START=1 UNINSTALL=0 UPDATE=0 AUTO_UPDATE=''
 
 say() { printf '%s\n' "$*"; }
@@ -46,6 +47,7 @@ while [ $# -gt 0 ]; do
     --source) need_arg "$@"; SOURCE=$2; shift ;;
     --host) need_arg "$@"; HOST=$2; shift ;;
     --carrier) need_arg "$@"; CARRIER=$2; shift ;;
+    --region) need_arg "$@"; REGION=$2; shift ;;
     --args) need_arg "$@"; ARGS=$2; shift ;;
     --version) need_arg "$@"; VERSION=${2#v}; shift ;;
     --mirror) need_arg "$@"; MIRROR=$2; shift ;;
@@ -227,6 +229,7 @@ if [ -f "$ENVFILE" ]; then
   [ -n "$SOURCE" ] || SOURCE=$(old PROBE_SOURCE)
   [ -n "$HOST" ] || HOST=$(old PROBE_HOST)
   [ -n "$CARRIER" ] || CARRIER=$(old PROBE_CARRIER)
+  [ -n "$REGION" ] || REGION=$(old PROBE_REGION)
   [ -n "$ARGS" ] || ARGS=$(old PROBE_ARGS)
 fi
 
@@ -251,7 +254,7 @@ ask SOURCE "测速点名称（例如 上海电信）"
 ask HOST "用来验证 IP 的域名（填你的 CDN 回源域名）" www.cloudflare.com
 
 case $CARRIER in ''|ct|cu|cm) ;; *) die "--carrier 只能是 ct（电信）、cu（联通）、cm（移动）" ;; esac
-for v in "$API" "$TOKEN" "$PROFILE" "$SOURCE" "$HOST" "$ARGS" "$MIRROR"; do
+for v in "$API" "$TOKEN" "$PROFILE" "$SOURCE" "$HOST" "$ARGS" "$MIRROR" "$REGION"; do
   case $v in *"'"*|*'
 '*) die "参数里不能有单引号或换行：$v" ;; esac
 done
@@ -270,6 +273,7 @@ POLARIS_CDN_PROFILE='$PROFILE'
 PROBE_SOURCE='$SOURCE'
 PROBE_HOST='$HOST'
 PROBE_CARRIER='$CARRIER'
+PROBE_REGION='$REGION'
 PROBE_ARGS='$ARGS'
 PROBE_MIRROR='$MIRROR'
 PROBE_AUTO_UPDATE='$AUTO_UPDATE'
@@ -368,7 +372,7 @@ start_service() {
 	. $ENVFILE
 	procd_open_instance
 	procd_set_param command $BIN \$PROBE_ARGS
-	procd_set_param env POLARIS_API="\$POLARIS_API" POLARIS_TOKEN="\$POLARIS_TOKEN" POLARIS_CDN_PROFILE="\$POLARIS_CDN_PROFILE" PROBE_SOURCE="\$PROBE_SOURCE" PROBE_HOST="\$PROBE_HOST" PROBE_CARRIER="\$PROBE_CARRIER"
+	procd_set_param env POLARIS_API="\$POLARIS_API" POLARIS_TOKEN="\$POLARIS_TOKEN" POLARIS_CDN_PROFILE="\$POLARIS_CDN_PROFILE" PROBE_SOURCE="\$PROBE_SOURCE" PROBE_HOST="\$PROBE_HOST" PROBE_CARRIER="\$PROBE_CARRIER" PROBE_REGION="\$PROBE_REGION"
 	procd_set_param respawn 3600 30 0
 	procd_set_param stdout 1
 	procd_set_param stderr 1

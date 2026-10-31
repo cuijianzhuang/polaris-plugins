@@ -455,3 +455,30 @@ func TestHTTPProbeAndProtocolFlags(t *testing.T) {
 		t.Fatal("redirect counted as HTTP verification")
 	}
 }
+
+func TestRegionReportAndEnvironment(t *testing.T) {
+	t.Setenv("PROBE_REGION", "CN-31")
+	c, err := parseFlags([]string{"-dry-run", "-source", "Shanghai"})
+	if err != nil || c.Region != "CN-31" {
+		t.Fatal(c.Region, err)
+	}
+	c, err = parseFlags([]string{"-dry-run", "-source", "Guangdong", "-region", "CN-44"})
+	if err != nil || c.Region != "CN-44" {
+		t.Fatal(c.Region, err)
+	}
+	panel := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		if body["region"] != "CN-44" || body["carrier"] != "ct" {
+			t.Error("missing audience metadata", body)
+		}
+	}))
+	defer panel.Close()
+	c.API = panel.URL
+	c.Carrier = "ct"
+	if err := report(context.Background(), c, "fixture", []Result{{IP: "104.16.1.1"}}); err != nil {
+		t.Fatal(err)
+	}
+}
